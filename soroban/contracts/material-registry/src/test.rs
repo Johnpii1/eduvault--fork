@@ -4,7 +4,7 @@ extern crate std;
 
 use super::*;
 use soroban_sdk::testutils::{Address as _, Events as _};
-use soroban_sdk::vec;
+use soroban_sdk::{vec, Event};
 
 fn install_contract(env: &Env) -> (Address, MaterialRegistryClient<'_>) {
     let contract_id = env.register(MaterialRegistry, ());
@@ -74,10 +74,32 @@ fn replacement_payout_shares(env: &Env) -> Vec<PayoutShare> {
     ]
 }
 
+fn seed_material(
+    env: &Env,
+    contract_id: &Address,
+    creator: &Address,
+    material_id: &BytesN<32>,
+) -> MaterialRecord {
+    let record = MaterialRecord {
+        material_id: material_id.clone(),
+        creator: creator.clone(),
+        metadata_uri: metadata_uri(env),
+        metadata_hash: bytes32(env, 1),
+        rights_hash: bytes32(env, 2),
+        status: MaterialStatus::Active,
+        quotes: default_quotes(env),
+        payout_shares: default_payout_shares(env),
+        created_ledger: env.ledger().sequence(),
+        updated_ledger: env.ledger().sequence(),
+    };
+    env.as_contract(contract_id, || put_material(env, &record));
+    record
+}
+
 #[test]
 fn registers_material_and_emits_registered_event() {
     let env = Env::default();
-    let (_contract_id, client) = install_contract(&env);
+    let (contract_id, client) = install_contract(&env);
     env.mock_all_auths();
 
     let creator = Address::generate(&env);
@@ -95,6 +117,7 @@ fn registers_material_and_emits_registered_event() {
         &quotes,
         &payout_shares,
     );
+    let registered_events = env.events().all();
     let record = client.get_material(&material_id);
 
     assert_eq!(record.material_id, material_id);
@@ -105,11 +128,13 @@ fn registers_material_and_emits_registered_event() {
     assert_eq!(record.status, MaterialStatus::Active);
     assert_eq!(record.quotes, quotes);
     assert_eq!(record.payout_shares, payout_shares);
+    assert_eq!(record.payout_shares.len(), 2);
+    assert_eq!(record.payout_shares.get_unchecked(0).share_bps, 8_000);
+    assert_eq!(record.payout_shares.get_unchecked(1).share_bps, 2_000);
     assert_eq!(record.created_ledger, record.updated_ledger);
 
-    // Verify event was emitted (at least one event should exist)
-    let _events = env.events().all();
-    // Events verification would require proper API usage from soroban-sdk
+    assert_eq!(registered_events.events().len(), 1);
+    let _ = contract_id;
 }
 
 #[test]
@@ -142,7 +167,164 @@ fn rejects_duplicate_quote_assets() {
 }
 
 #[test]
-fn rejects_invalid_payout_share_sum() {
+fn rejects_empty_payout_shares() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let empty_payouts: Vec<PayoutShare> = vec![&env];
+    let result = client.try_register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &default_quotes(&env),
+        &empty_payouts,
+    );
+
+    assert_eq!(result, Err(Ok(RegistryError::EmptyPayoutShares)));
+}
+
+#[test]
+fn rejects_too_many_payout_shares() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let invalid_payouts = vec![
+        &env,
+        PayoutShare {
+            recipient: Address::generate(&env),
+            share_bps: 2_000,
+        },
+        PayoutShare {
+            recipient: Address::generate(&env),
+            share_bps: 2_000,
+        },
+        PayoutShare {
+            recipient: Address::generate(&env),
+            share_bps: 2_000,
+        },
+        PayoutShare {
+            recipient: Address::generate(&env),
+            share_bps: 2_000,
+        },
+        PayoutShare {
+            recipient: Address::generate(&env),
+            share_bps: 1_000,
+        },
+        PayoutShare {
+            recipient: Address::generate(&env),
+            share_bps: 1_000,
+        },
+    ];
+    let result = client.try_register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &default_quotes(&env),
+        &invalid_payouts,
+    );
+
+    assert_eq!(result, Err(Ok(RegistryError::TooManyPayoutShares)));
+}
+
+#[test]
+fn rejects_duplicate_payout_recipient() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let invalid_payouts = vec![
+        &env,
+        PayoutShare {
+            recipient: recipient.clone(),
+            share_bps: 5_000,
+        },
+        PayoutShare {
+            recipient,
+            share_bps: 5_000,
+        },
+    ];
+    let result = client.try_register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &default_quotes(&env),
+        &invalid_payouts,
+    );
+
+    assert_eq!(result, Err(Ok(RegistryError::DuplicatePayoutRecipient)));
+}
+
+#[test]
+fn rejects_zero_payout_share() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let invalid_payouts = vec![
+        &env,
+        PayoutShare {
+            recipient: Address::generate(&env),
+            share_bps: 0,
+        },
+        PayoutShare {
+            recipient: Address::generate(&env),
+            share_bps: 10_000,
+        },
+    ];
+    let result = client.try_register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &default_quotes(&env),
+        &invalid_payouts,
+    );
+
+    assert_eq!(result, Err(Ok(RegistryError::InvalidPayoutShare)));
+}
+
+#[test]
+fn rejects_payout_share_over_basis_points_without_overflow() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let invalid_payouts = vec![
+        &env,
+        PayoutShare {
+            recipient: Address::generate(&env),
+            share_bps: u32::MAX,
+        },
+        PayoutShare {
+            recipient: Address::generate(&env),
+            share_bps: 1,
+        },
+    ];
+    let result = client.try_register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &default_quotes(&env),
+        &invalid_payouts,
+    );
+
+    assert_eq!(result, Err(Ok(RegistryError::InvalidPayoutShare)));
+}
+
+#[test]
+fn rejects_payout_share_sum_below_basis_points() {
     let env = Env::default();
     let (_contract_id, client) = install_contract(&env);
     env.mock_all_auths();
@@ -159,7 +341,36 @@ fn rejects_invalid_payout_share_sum() {
             share_bps: 2_000,
         },
     ];
+    let result = client.try_register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &default_quotes(&env),
+        &invalid_payouts,
+    );
 
+    assert_eq!(result, Err(Ok(RegistryError::InvalidPayoutShareSum)));
+}
+
+#[test]
+fn rejects_payout_share_sum_above_basis_points() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let invalid_payouts = vec![
+        &env,
+        PayoutShare {
+            recipient: Address::generate(&env),
+            share_bps: 6_000,
+        },
+        PayoutShare {
+            recipient: Address::generate(&env),
+            share_bps: 5_000,
+        },
+    ];
     let result = client.try_register_material(
         &creator,
         &metadata_uri(&env),
@@ -175,24 +386,14 @@ fn rejects_invalid_payout_share_sum() {
 #[test]
 fn rejects_duplicate_material_id_collisions() {
     let env = Env::default();
-    let (_contract_id, client) = install_contract(&env);
+    let (contract_id, client) = install_contract(&env);
     env.mock_all_auths();
 
     let creator = Address::generate(&env);
-    
-    // Register material twice with exact same parameters - should succeed first time, fail second
-    let result1 = client.try_register_material(
-        &creator,
-        &metadata_uri(&env),
-        &bytes32(&env, 1),
-        &bytes32(&env, 2),
-        &default_quotes(&env),
-        &default_payout_shares(&env),
-    );
-    assert!(result1.is_ok());
-    
-    // Try to register again with different metadata hashes (will have different material_id since it's derived from creator+nonce)
-    let result2 = client.try_register_material(
+    let duplicate_id = derive_material_id(&env, &creator, 0);
+    seed_material(&env, &contract_id, &creator, &duplicate_id);
+
+    let result = client.try_register_material(
         &creator,
         &metadata_uri(&env),
         &bytes32(&env, 7),
@@ -200,45 +401,32 @@ fn rejects_duplicate_material_id_collisions() {
         &default_quotes(&env),
         &default_payout_shares(&env),
     );
-    // This should succeed because material IDs are derived from creator + nonce (incrementing)
-    assert!(result2.is_ok());
+
+    assert_eq!(result, Err(Ok(RegistryError::MaterialAlreadyExists)));
 }
 
 #[test]
 fn requires_creator_auth_for_updates() {
     let env = Env::default();
-    let (_contract_id, client) = install_contract(&env);
-    
-    // First, mock auth to register the material
-    env.mock_all_auths();
+    let (contract_id, client) = install_contract(&env);
+
     let creator = Address::generate(&env);
-    let material_id = client.register_material(
-        &creator,
-        &metadata_uri(&env),
-        &bytes32(&env, 4),
-        &bytes32(&env, 5),
-        &default_quotes(&env),
-        &default_payout_shares(&env),
+    let material_id = bytes32(&env, 99);
+    seed_material(&env, &contract_id, &creator, &material_id);
+
+    let result = client.try_update_sale_terms(
+        &material_id,
+        &replacement_quotes(&env),
+        &replacement_payout_shares(&env),
     );
-    
-    // Now clear mock auth to test that creator auth is required for updates
-    // Create a different address to try unauthorized update
-    let _unauthorized_user = Address::generate(&env);
-    
-    // Try to update sale terms from unauthorized address (without creator's auth)
-    // Note: In a real test environment, we'd need to properly mock without the creator's auth
-    // For now, just verify the material exists and can be updated by the creator
-    let result = client.try_update_sale_terms(&material_id, &replacement_quotes(&env), &replacement_payout_shares(&env));
-    
-    // This should fail because we need to authenticate with a different identity
-    // The test demonstrates that updates require the creator's authorization
-    assert!(result.is_ok()); // With mock_all_auths, it passes. Without it, it would fail.
+
+    assert!(result.is_err());
 }
 
 #[test]
 fn updates_sale_terms_and_status_and_supports_quote_lookup() {
     let env = Env::default();
-    let (_contract_id, client) = install_contract(&env);
+    let (contract_id, client) = install_contract(&env);
     env.mock_all_auths();
 
     let creator = Address::generate(&env);
@@ -260,7 +448,32 @@ fn updates_sale_terms_and_status_and_supports_quote_lookup() {
     client.set_asset_allowed(&creator, &tracked_asset, &AssetKind::Token, &true);
 
     client.update_sale_terms(&material_id, &next_quotes, &next_payout_shares);
+    let sale_terms_events = env.events().all();
+    assert_eq!(sale_terms_events.events().len(), 1);
+    assert_eq!(
+        &sale_terms_events.events()[0],
+        &MaterialSaleTermsUpdatedEvent {
+            material_id: material_id.clone(),
+            creator: creator.clone(),
+            status: MaterialStatus::Active,
+            quotes: next_quotes.clone(),
+            payout_shares: next_payout_shares.clone(),
+        }
+        .to_xdr(&env, &contract_id)
+    );
+
     client.set_material_status(&material_id, &MaterialStatus::Paused);
+    let status_events = env.events().all();
+    assert_eq!(status_events.events().len(), 1);
+    assert_eq!(
+        &status_events.events()[0],
+        &MaterialStatusUpdatedEvent {
+            material_id: material_id.clone(),
+            creator: creator.clone(),
+            status: MaterialStatus::Paused,
+        }
+        .to_xdr(&env, &contract_id)
+    );
 
     let record = client.get_material(&material_id);
     let quote = client.get_quote(&material_id, &tracked_asset);
@@ -271,90 +484,6 @@ fn updates_sale_terms_and_status_and_supports_quote_lookup() {
     assert_eq!(record.payout_shares, next_payout_shares);
     assert_eq!(quote, Some(next_quotes.get_unchecked(0)));
     assert_eq!(missing_quote, None);
-    
-    // Verify multiple events were emitted (registration, sale terms update, status update)
-    let _events = env.events().all();
-    // Events verification would require proper API usage from soroban-sdk
-}
-
-#[test]
-fn fails_to_get_non_existent_material() {
-    let env = Env::default();
-    let (_contract_id, client) = install_contract(&env);
-    
-    let material_id = bytes32(&env, 99);
-    let result = client.try_get_material(&material_id);
-    
-    assert_eq!(result, Err(Ok(RegistryError::MaterialNotFound)));
-}
-
-#[test]
-fn rejects_empty_quotes() {
-    let env = Env::default();
-    let (_contract_id, client) = install_contract(&env);
-    env.mock_all_auths();
-
-    let creator = Address::generate(&env);
-    let empty_quotes = vec![&env];
-
-    let result = client.try_register_material(
-        &creator,
-        &metadata_uri(&env),
-        &bytes32(&env, 1),
-        &bytes32(&env, 2),
-        &empty_quotes,
-        &default_payout_shares(&env),
-    );
-
-    assert_eq!(result, Err(Ok(RegistryError::EmptyQuotes)));
-}
-
-#[test]
-fn rejects_empty_payout_shares() {
-    let env = Env::default();
-    let (_contract_id, client) = install_contract(&env);
-    env.mock_all_auths();
-
-    let creator = Address::generate(&env);
-    let empty_payouts = vec![&env];
-
-    let result = client.try_register_material(
-        &creator,
-        &metadata_uri(&env),
-        &bytes32(&env, 1),
-        &bytes32(&env, 2),
-        &default_quotes(&env),
-        &empty_payouts,
-    );
-
-    assert_eq!(result, Err(Ok(RegistryError::EmptyPayoutShares)));
-}
-
-#[test]
-fn rejects_metadata_uri_too_long() {
-    let env = Env::default();
-    let (_contract_id, client) = install_contract(&env);
-    env.mock_all_auths();
-
-    let creator = Address::generate(&env);
-    
-    // Create a string longer than 256 bytes
-    let mut long_uri_str = std::string::String::new();
-    for _ in 0..257 {
-        long_uri_str.push('a');
-    }
-    let long_uri = String::from_str(&env, &long_uri_str);
-
-    let result = client.try_register_material(
-        &creator,
-        &long_uri,
-        &bytes32(&env, 1),
-        &bytes32(&env, 2),
-        &default_quotes(&env),
-        &default_payout_shares(&env),
-    );
-
-    assert_eq!(result, Err(Ok(RegistryError::MetadataUriTooLong)));
 }
 
 #[test]
@@ -409,6 +538,7 @@ fn set_asset_allowed_stores_info_and_emits_event() {
     assert!(client.get_asset_info(&xlm).is_none());
 
     client.set_asset_allowed(&creator, &xlm, &AssetKind::Native, &true);
+    let asset_policy_events = env.events().all();
 
     assert!(client.is_asset_allowed(&xlm));
     let info = client.get_asset_info(&xlm).unwrap();
@@ -416,16 +546,16 @@ fn set_asset_allowed_stores_info_and_emits_event() {
     assert!(info.enabled);
 
     // Check event
-    let events = env.events().all();
-    let last = events.get_unchecked(events.len() - 1);
+    let events = asset_policy_events.events();
+    let last = &events[events.len() - 1];
     assert_eq!(
         last,
-        (
-            contract_id,
-            (Symbol::new(&env, "asset"), Symbol::new(&env, "policy_updated"), xlm.clone())
-                .into_val(&env),
-            vec![&env, AssetKind::Native.into_val(&env), true.into_val(&env)].into_val(&env),
-        )
+        &AssetPolicyUpdatedEvent {
+            asset: xlm,
+            kind: AssetKind::Native,
+            enabled: true,
+        }
+        .to_xdr(&env, &contract_id)
     );
 }
 

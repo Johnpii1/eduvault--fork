@@ -265,7 +265,10 @@ impl MaterialRegistry {
         Ok(())
     }
 
-    pub fn get_material(env: Env, material_id: BytesN<32>) -> Result<MaterialRecord, RegistryError> {
+    pub fn get_material(
+        env: Env,
+        material_id: BytesN<32>,
+    ) -> Result<MaterialRecord, RegistryError> {
         get_material_record(&env, &material_id)
     }
 
@@ -414,11 +417,13 @@ fn validate_payout_shares(payout_shares: &Vec<PayoutShare>) -> Result<(), Regist
     let mut index = 0;
     while index < len {
         let share = payout_shares.get_unchecked(index);
-        if share.share_bps == 0 {
+        if share.share_bps == 0 || share.share_bps > BASIS_POINTS {
             return Err(RegistryError::InvalidPayoutShare);
         }
 
-        total_share_bps += share.share_bps;
+        total_share_bps = total_share_bps
+            .checked_add(share.share_bps)
+            .ok_or(RegistryError::InvalidPayoutShareSum)?;
 
         let mut other = index + 1;
         while other < len {
@@ -463,7 +468,10 @@ fn has_material(env: &Env, material_id: &BytesN<32>) -> bool {
         .has(&DataKey::Material(material_id.clone()))
 }
 
-fn get_material_record(env: &Env, material_id: &BytesN<32>) -> Result<MaterialRecord, RegistryError> {
+fn get_material_record(
+    env: &Env,
+    material_id: &BytesN<32>,
+) -> Result<MaterialRecord, RegistryError> {
     env.storage()
         .persistent()
         .get(&DataKey::Material(material_id.clone()))
