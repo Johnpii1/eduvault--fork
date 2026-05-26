@@ -3,7 +3,12 @@
 export const dynamic = "force-dynamic";
 
 import { useEffect, useState } from "react";
-import { TrendingUp, DollarSign, Wallet, ArrowUpRight } from "lucide-react";
+import {
+  FiArrowUpRight as ArrowUpRight,
+  FiCreditCard as Wallet,
+  FiDollarSign as DollarSign,
+  FiTrendingUp as TrendingUp,
+} from "react-icons/fi";
 
 // ─── Area Chart (pure SVG) ────────────────────────────────────────────────────
 

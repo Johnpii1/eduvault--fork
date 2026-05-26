@@ -6,7 +6,7 @@
 //
 // API reference: https://stellarwalletskit.dev/
 
-import { StellarWalletsKit } from '@creit-tech/stellar-wallets-kit/sdk';
+import { StellarWalletsKit } from '@creit-tech/stellar-wallets-kit';
 import { defaultModules } from '@creit-tech/stellar-wallets-kit/modules/utils';
 import { Horizon, Networks } from '@stellar/stellar-sdk';
 
