@@ -80,6 +80,12 @@ export default function Navbar() {
 						Marketplace
 					</Link>
 					<Link
+						href="/institutions"
+						className="hover:text-stellar-blue transition-all duration-200"
+					>
+						Institutions
+					</Link>
+					<Link
 						href="https://edu-vault.gitbook.io/edu-vault-docs/"
 						target="_blank"
 						className="hover:text-stellar-blue transition-all duration-200"
@@ -173,6 +179,7 @@ export default function Navbar() {
 					>
 						<Link href="/#howitworks" onClick={() => setMenuOpen(false)} className="text-lg font-bold">How It Works</Link>
 						<Link href="/marketplace" onClick={() => setMenuOpen(false)} className="text-lg font-bold">Marketplace</Link>
+						<Link href="/institutions" onClick={() => setMenuOpen(false)} className="text-lg font-bold">Institutions</Link>
 						<Link href="https://edu-vault.gitbook.io/edu-vault-docs/" onClick={() => setMenuOpen(false)} className="text-lg font-bold">Docs</Link>
 
 						<div className="w-full px-8 pt-4">

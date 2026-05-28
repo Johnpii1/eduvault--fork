@@ -4,8 +4,7 @@ import { getDb } from "@/lib/mongodb";
 import { NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { getUserFromCookie } from "@/lib/api/auth";
-  return verification.payload;
-}
+import { getIpfsUrl } from "@/lib/config/chain";
 
 export async function GET(req, { params }) {
   try {
