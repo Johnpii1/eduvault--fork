@@ -3,6 +3,8 @@ import EarningsSection from "./components/EarningsSection";
 import TrendingMaterials from "./components/TrendingMaterials";
 import LatestActivity from "./components/LatestActivity";
 import TopCreators from "./components/TopCreators";
+import SavedMaterialsSection from "./components/SavedMaterialsSection";
+import RecentlyViewedSection from "./components/RecentlyViewedSection";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import jwt from "jsonwebtoken";
@@ -53,15 +55,17 @@ export default async function DashboardPage() {
 
             {/* Main Content Split: Creator Focus vs Discovery */}
             <div className="grid lg:grid-cols-3 gap-8 items-start">
-                
+
                 {/* Left Column (Creator Focus - 2/3 width) */}
                 <div className="lg:col-span-2 space-y-8">
+                    <SavedMaterialsSection />
                     <LatestActivity />
                     {/* Placeholder for future performance charts could go here */}
                 </div>
 
                 {/* Right Column (Discovery Focus - 1/3 width) */}
                 <div className="space-y-8">
+                    <RecentlyViewedSection />
                     <TrendingMaterials />
                     <TopCreators />
                 </div>

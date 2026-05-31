@@ -27,12 +27,29 @@ export const metadata = {
   },
 };
 
+const themeInitScript = `
+(() => {
+  try {
+    const storageKey = "eduvault-theme";
+    const storedTheme = window.localStorage.getItem(storageKey);
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const theme = storedTheme === "light" || storedTheme === "dark"
+      ? storedTheme
+      : (prefersDark ? "dark" : "light");
+
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  } catch (error) {}
+})();
+`;
+
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <Web3Provider>
           <ToastProvider>
             <CartProvider>

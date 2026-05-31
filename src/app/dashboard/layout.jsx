@@ -5,7 +5,7 @@ import DashboardHeader from "./components/DashboardHeader";
 
 export default function DashboardLayout({ children }) {
 	return (
-		<div className="flex min-h-screen bg-gray-50 text-gray-900 overflow-hidden">
+		<div className="flex min-h-screen bg-background text-foreground overflow-hidden">
 			{/* Sidebar */}
 			<Sidebar />
 
@@ -15,7 +15,7 @@ export default function DashboardLayout({ children }) {
 				<DashboardHeader />
 
 				{/* Scrollable main content */}
-				<main className="flex-1 overflow-y-auto p-8 bg-gray-50">
+				<main className="flex-1 overflow-y-auto p-8 bg-background">
 					<div className="max-w-7xl mx-auto">{children}</div>
 				</main>
 			</div>
