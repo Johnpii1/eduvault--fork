@@ -5,8 +5,9 @@ export const purchaseService = {
     return apiClient('/api/purchase', { body: purchaseData });
   },
 
-  checkEntitlement: async (materialId) => {
-    return apiClient(`/api/entitlements?materialId=${materialId}`);
+  checkEntitlement: async (materialId, buyerAddress) => {
+    const params = new URLSearchParams({ materialId, buyerAddress });
+    return apiClient(`/api/entitlements?${params.toString()}`);
   },
 
   checkBatchEntitlements: async (materialIds) => {

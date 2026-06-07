@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { FaMoon, FaSun } from "react-icons/fa6";
 import { useThemePreference } from "@/hooks/useThemePreference";
 
@@ -9,6 +8,7 @@ export default function ThemeToggle({ className = "" }) {
 	const [mounted, setMounted] = useState(false);
 
 	useEffect(() => {
+		// eslint-disable-next-line react-hooks/set-state-in-effect
 		setMounted(true);
 	}, []);
 

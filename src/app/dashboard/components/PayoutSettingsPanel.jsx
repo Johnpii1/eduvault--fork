@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   FaCheckCircle,
   FaExclamationTriangle,
@@ -17,15 +17,16 @@ function fieldValue(value, fallback = "Not set yet") {
 
 export default function PayoutSettingsPanel({ initialUser }) {
   const { mutateAsync: updateProfile, isPending } = useUpdateProfile();
-  const [form, setForm] = useState({
-    payoutWalletAddress: "",
-    preferredPayoutCurrency: "XLM",
-    payoutNotes: "",
-  });
+  const [form, setForm] = useState(() => ({
+    payoutWalletAddress: initialUser?.payoutWalletAddress || "",
+    preferredPayoutCurrency: initialUser?.preferredPayoutCurrency || "XLM",
+    payoutNotes: initialUser?.payoutNotes || "",
+  }));
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm({
       payoutWalletAddress: initialUser?.payoutWalletAddress || "",
       preferredPayoutCurrency: initialUser?.preferredPayoutCurrency || "XLM",

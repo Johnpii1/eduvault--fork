@@ -1,124 +1,38 @@
-# trying again
-devfoma
-
 # EduVault
 
-EduVault is an educational content marketplace that helps educators and student creators publish, license, and monetize learning materials using low-cost payment rails and verifiable ownership primitives on Stellar.
+EduVault is an educational content marketplace that helps educators, students, and creators publish, license, sell, and manage access to learning materials.
 
-## Status
-
-EduVault is an in-development project. This repository already contains a working Next.js prototype for creator profiles, content uploads, IPFS-backed metadata, and marketplace flows. It also preserves an archived EVM/Celo proof of concept for tokenized ownership under `archive/legacy-evm/`. The Drip Wave submission proposes the next milestone: moving payments, licensing, and entitlement checks onto Stellar and Soroban.
+The project combines a modern Next.js application with off-chain file storage, searchable marketplace data, and a planned Stellar/Soroban payment and entitlement layer for low-cost educational content transactions.
 
 ## Overview
 
-Educational materials are routinely distributed through closed chat groups, informal marketplaces, and ad hoc file sharing. That makes pricing inconsistent, creator attribution weak, and access control difficult. EduVault addresses that gap with a creator-first distribution layer for notes, guides, templates, and exam prep materials. Files remain off-chain for efficiency, while payments, licensing state, and entitlement proofs are moved onto Stellar where they can be settled cheaply and verified openly.
+Many educational resources are shared through informal channels such as WhatsApp groups, Telegram communities, and manual file transfers. This makes it difficult for creators to earn fairly, buyers to verify ownership, and institutions to manage trusted access.
 
-## Problem Statement
-
-- Educational creators often cannot monetize low-cost digital materials because card rails and payout infrastructure are too expensive for small transactions.
-- Students and professionals have limited ways to verify that a resource came from the actual author or institution.
-- Cross-border educational commerce is fragmented, especially in markets where local payment coverage is inconsistent.
-- Existing content platforms usually optimize for media distribution, not rights-aware academic content access.
-
-## Solution
-
-EduVault combines off-chain file storage with on-chain payment and entitlement records:
-
-- Learning materials are uploaded, pinned to IPFS, and indexed in a searchable catalog.
-- Creators define usage rights, pricing, and visibility rules.
-- Buyers pay in XLM or supported Stellar assets such as USDC on Stellar.
-- Soroban contracts record purchase entitlements, payout rules, and access permissions.
-- The application checks on-chain ownership or entitlement status before revealing protected download access.
-
-## Why This Project Matters
-
-EduVault targets a real commercial behavior that already exists: students and educators buying and sharing digital learning materials in low-ticket transactions. Stellar is well suited for this because the network is built for fast, low-cost payments and interoperable asset flows. That combination makes educational micropayments economically viable in a way that conventional rails often are not.
-
-This matters beyond a single app. If EduVault succeeds, it becomes a reusable pattern for digital content licensing on Stellar: creator payments, entitlement gating, institution-issued access assets, scholarship credits, and cross-border educational commerce.
+EduVault provides a creator-first marketplace where learning materials can be uploaded, listed, discovered, purchased, and accessed securely.
 
 ## Core Features
 
-- Wallet-linked creator profiles
+- Creator profiles connected to wallet-based onboarding
 - Educational material upload flow with thumbnail support
 - IPFS-backed file and metadata storage through Pinata
 - MongoDB-backed catalog and profile persistence
-- Marketplace discovery and item detail pages
-- Usage-rights and pricing metadata for each material
-- Planned Stellar-native checkout and access entitlement verification
-- Planned creator payout and revenue-split logic on Soroban
+- Marketplace discovery and material detail pages
+- Usage-rights and pricing metadata for each resource
+- Planned Stellar-native checkout with XLM or supported Stellar assets
+- Planned Soroban-based entitlement checks for protected downloads
 
 ## How It Works
 
-1. A creator connects a wallet and creates a profile.
-2. The creator uploads a document and optional cover image.
-3. The backend pins the file and metadata to IPFS and stores searchable catalog state in MongoDB.
-4. The listing is published with price, license terms, and creator attribution.
-5. In the Stellar milestone, a Soroban contract registers the material, accepted payment asset, and license conditions.
-6. A buyer completes payment in XLM or a supported Stellar asset.
-7. The application verifies the entitlement on-chain and grants access to the purchased resource.
+1. A creator creates a profile and connects a wallet.
+2. The creator uploads a learning material and optional cover image.
+3. The file and metadata are pinned to IPFS.
+4. The listing is stored in MongoDB and displayed in the marketplace.
+5. A buyer discovers the resource and completes the checkout flow.
+6. The app verifies access rights before allowing protected downloads.
 
-## Stellar Ecosystem Alignment
+## Tech Stack
 
-EduVault is strategically aligned with Stellar for four reasons:
-
-- Stellar is optimized for fast, low-cost payment flows, which is critical for low-value digital educational purchases.
-- Soroban allows entitlement, payout, and licensing rules to be enforced on-chain without moving the file contents themselves on-chain.
-- Stellar Asset Contracts and classic Stellar assets make it practical to accept stable assets, creator-issued access tokens, or institution-issued credits.
-- Stellar already has strong payment and stablecoin positioning, which makes it a better fit for educational commerce and financial access than a general-purpose NFT-only narrative.
-
-Stellar documentation confirms that Soroban is integrated into the existing Stellar blockchain and that Stellar assets can be used directly from Soroban through the Stellar Asset Contract model. Official Stellar materials also position USDC on Stellar around fast, low-cost, global payments, which maps directly to the EduVault checkout and payout model.
-
-## Specific Benefits To The Stellar Blockchain
-
-- Increases utility on Stellar through recurring digital goods transactions instead of one-off speculative activity.
-- Creates a practical creator economy use case for Stellar in education.
-- Expands demand for XLM and Stellar-based stable assets as settlement rails for low-ticket commerce.
-- Provides a reusable open-source reference for Soroban-based marketplaces, entitlement gating, and creator payouts.
-- Supports financial inclusion by making it viable to sell and buy educational content across borders with minimal fees.
-- Opens room for institution-issued assets such as scholarship credits, cohort passes, or verified course access rights.
-
-## Why It Is Valuable
-
-### For developers
-
-- Offers a concrete marketplace pattern for combining Soroban contracts with off-chain storage and web application state.
-- Can evolve into reusable modules for entitlement checks, asset-based licensing, and creator royalty distribution.
-- Demonstrates a practical way to connect content access to Stellar account state.
-
-### For users
-
-- Reduces the cost of paying for educational materials.
-- Improves attribution and trust around who published a resource.
-- Makes cross-border purchase and payout flows more accessible.
-
-### For the ecosystem
-
-- Brings real transaction volume tied to learning, upskilling, and creator income.
-- Broadens Stellar's presence in digital commerce beyond remittance and treasury use cases.
-- Gives ecosystem partners a credible application layer example for education and financial access.
-
-## Technical Architecture
-
-### Current repository state
-
-- Frontend: Next.js App Router, React 19, Tailwind CSS 4
-- Backend: Next.js route handlers for uploads, profiles, and material catalog operations
-- Storage: MongoDB for profiles and catalog metadata
-- File persistence: IPFS pinning through Pinata
-- Wallet prototype: wagmi, RainbowKit, WalletConnect, and Coinbase Wallet support
-- Smart contract prototype: archived Solidity ERC-721 proof of concept in [`archive/legacy-evm/contracts/EduVault.sol`](archive/legacy-evm/contracts/EduVault.sol)
-
-### Proposed Stellar-native architecture
-
-- Frontend application for creator onboarding, browsing, purchase flow, and access checks
-- Backend API for metadata management, entitlement-aware file delivery, email notifications, and indexing support
-- Soroban contracts for material registration, payment handling, revenue distribution, and purchase entitlements
-- Stellar RPC/Horizon-based indexing service for syncing on-chain state to the application catalog
-- IPFS or managed object storage for file bytes and previews, with on-chain references to immutable metadata
-
-## Proposed Tech Stack
-
-### Current
+### Current Stack
 
 - Next.js 16
 - React 19
@@ -127,54 +41,53 @@ Stellar documentation confirms that Soroban is integrated into the existing Stel
 - Pinata/IPFS
 - Nodemailer
 - wagmi and RainbowKit
-- OpenZeppelin contracts
+- Hardhat and OpenZeppelin for the archived EVM prototype
 
-### Planned Stellar additions
+### Planned Stellar Additions
 
 - Soroban smart contracts written in Rust
-- Stellar SDK and RPC/Horizon clients for transaction submission and indexing
-- Stellar wallet integration for account-based auth and signing
-- XLM and Stellar-based stable assets for settlement
-- Optional issuer/distribution account tooling for creator or institution-issued assets
+- Stellar SDK and RPC/Horizon clients
+- Stellar wallet integration
+- XLM and Stellar-based stable asset payments
+- On-chain purchase entitlement records
 
-## Smart Contract / Blockchain Interaction
+## Architecture
 
-### Current prototype
+```text
+Creator / Buyer
+      |
+      v
+Next.js Frontend
+      |
+      v
+Next.js API Routes
+      |---------------------> MongoDB
+      |---------------------> Pinata / IPFS
+      |---------------------> Email Service
+      |
+      v
+Planned Stellar Layer
+      |
+      v
+Soroban Contracts + Stellar RPC/Horizon
+```
 
-This repository preserves an archived ERC-721 contract and EVM wallet integration used to validate the upload-to-ownership flow during early prototyping. That contract is not the final blockchain strategy for the Drip Wave submission and should not be extended for new product work.
+### Current Repository State
+
+- Frontend: Next.js App Router, React, Tailwind CSS
+- Backend: Next.js route handlers for uploads, profiles, and catalog operations
+- Storage: MongoDB for profiles and marketplace metadata
+- File persistence: IPFS pinning through Pinata
+- Wallet prototype: wagmi, RainbowKit, WalletConnect, and Coinbase Wallet support
+- Legacy contract: archived Solidity proof of concept in `archive/legacy-evm/`
 
 ## Legacy EVM Prototype
 
-The Solidity/Celo prototype is archived under `archive/legacy-evm/`.
+The repository includes an archived Solidity/Celo proof of concept under `archive/legacy-evm/`.
 
-- It is retained for historical reference and tests only.
-- It must not be treated as the production chain layer.
-- New product work should target Stellar and Soroban instead.
+This legacy code is kept for historical reference and testing only. New blockchain work should target Stellar and Soroban.
 
-## Migration Checklist
-
-- Replace wallet-specific EVM assumptions in the UI with Stellar wallet flows.
-- Implement Soroban material registration and entitlement checks.
-- Replace legacy purchase/mint UI with Soroban-backed publishing and checkout.
-- Remove any production environment assumptions that reference Celo or the archived contract.
-- Keep legacy prototype tests isolated under archived contract checks only.
-
-### Proposed Stellar implementation
-
-The proposed Stellar design is intentionally practical:
-
-- `MaterialRegistry` contract
-  - Registers a material ID, creator address, metadata hash, price, accepted asset, and rights hash.
-- `PurchaseManager` contract
-  - Accepts payment in XLM or approved Stellar assets, records entitlement state, and emits purchase events.
-- `PayoutConfig` logic
-  - Supports creator payouts, treasury fees, and later scholarship or referral splits.
-
-Content files stay off-chain. The chain is used for settlement, rights registration, and access verification.
-
-## Installation
-
-Examples below use `npm`, but `pnpm` or `bun` can also be used.
+## Getting Started
 
 ### Prerequisites
 
@@ -182,9 +95,9 @@ Examples below use `npm`, but `pnpm` or `bun` can also be used.
 - npm 10+ or pnpm
 - MongoDB 7+ or Docker
 - Pinata credentials for file uploads
-- A wallet for testing current prototype flows
+- Wallet credentials for testing wallet-based flows
 
-### Setup
+### Installation
 
 ```bash
 git clone https://github.com/Obiajulu-gif/eduvault.git
@@ -193,153 +106,128 @@ npm install
 cp .env.example .env.local
 ```
 
-If you want a local MongoDB instance:
+Start MongoDB locally with Docker:
 
 ```bash
 docker compose up -d mongodb
 ```
 
-## Architecture & User Flows
-
-See the architecture and product flow docs for developer onboarding:
-
-- [Architecture](docs/architecture.md)
-- [User Flows](docs/user-flows.md)
-
-
-Start the app:
+Start the development server:
 
 ```bash
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Open the app at:
 
-### Test workflows
+```text
+http://localhost:3000
+```
 
-Run the Solidity prototype tests:
+## Environment Variables
+
+Use `.env.example` as the main reference for local configuration.
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `MONGODB_URI` | Yes | MongoDB connection string |
+| `MONGODB_DB` | No | MongoDB database name. Defaults to `eduvault` |
+| `JWT_SECRET` | Yes | Signs session cookies for authenticated routes |
+| `NEXT_PUBLIC_APP_URL` | Yes | Public app URL used in links and emails |
+| `PINATA_JWT` | Yes | Pinata authentication for uploads |
+| `NEXT_PUBLIC_GATEWAY_URL` | Yes | Gateway URL for pinned content |
+| `EMAIL_USER` / `EMAIL_PASS` | Optional | Simple email transport configuration |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | Optional | SMTP email configuration |
+| `EMAIL_FROM` | Optional | Custom sender address |
+| `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | Optional | Enables current wallet prototype |
+| `NEXT_PUBLIC_STELLAR_NETWORK` | Planned | Target Stellar network |
+| `NEXT_PUBLIC_STELLAR_RPC_URL` | Planned | Stellar/Soroban RPC endpoint |
+| `NEXT_PUBLIC_HORIZON_URL` | Planned | Horizon endpoint for account and event indexing |
+| `NEXT_PUBLIC_SOROBAN_CONTRACT_ID` | Planned | Contract ID for entitlement and payment logic |
+| `NEXT_PUBLIC_ACCEPTED_ASSET` | Planned | Default accepted asset such as `XLM` or `USDC` |
+
+## Available Scripts
 
 ```bash
+npm run dev
+npm run build
+npm run start
+npm run lint
+npm test
 npm run test:contracts
-```
-
-Run backend validation, rate-limit, and indexer tests:
-
-```bash
 npm run test:backend
+npm run audit:deps
+npm run scan:secrets
 ```
 
-Run the full local test baseline:
+## Testing
+
+Run the full test suite:
 
 ```bash
 npm test
 ```
 
-Backend schema and route contracts are documented in [`docs/backend-contracts.md`](docs/backend-contracts.md).
+Run backend tests:
 
-## Local Development Setup
+```bash
+npm run test:backend
+```
 
-1. Install dependencies.
-2. Copy `.env.example` to `.env.local`.
-3. Configure MongoDB, Pinata, and email credentials.
-4. Run `docker compose up -d mongodb` if you do not already have MongoDB running.
-5. Start the development server with `npm run dev`.
+Run archived Solidity prototype tests:
 
-## Environment Variables
+```bash
+npm run test:contracts
+```
 
-See [`.env.example`](.env.example) for the canonical template.
+## Documentation
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `MONGODB_URI` | Yes | MongoDB connection string |
-| `MONGODB_DB` | No | MongoDB database name, defaults to `eduvault` |
-| `JWT_SECRET` | Yes | Signs session cookies for authenticated routes |
-| `NEXT_PUBLIC_APP_URL` | Yes | Public base URL used in links and emails |
-| `PINATA_JWT` | Yes | Pinata authentication for uploads |
-| `NEXT_PUBLIC_GATEWAY_URL` | Yes | Gateway URL used to resolve pinned content |
-| `EMAIL_USER` / `EMAIL_PASS` | Optional | Simple email transport configuration |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` | Optional | Explicit SMTP configuration |
-| `EMAIL_FROM` | Optional | Override sender address |
-| `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | Optional | Enables current wallet prototype |
-| `NEXT_PUBLIC_STELLAR_NETWORK` | Planned | Target Stellar network for Soroban milestone |
-| `NEXT_PUBLIC_STELLAR_RPC_URL` | Planned | Soroban RPC endpoint |
-| `NEXT_PUBLIC_HORIZON_URL` | Planned | Horizon endpoint for indexing and account lookups |
-| `NEXT_PUBLIC_SOROBAN_CONTRACT_ID` | Planned | Contract ID for entitlement and payment logic |
-| `NEXT_PUBLIC_ACCEPTED_ASSET` | Planned | Default accepted payment asset such as `XLM` or `USDC` |
+- [Architecture](docs/architecture.md)
+- [User Flows](docs/user-flows.md)
+- [Backend Contracts](docs/backend-contracts.md)
 
-## Deployment Guardrails
+## Deployment Notes
 
-- Production builds and startups validate required environment values before the app serves traffic.
-- Placeholder secrets such as `replace-with-a-long-random-string` fail validation in production.
-- CI runs dependency audits and a secret/placeholder scan before merge.
-- Security headers are set centrally in `next.config.mjs` for all application routes.
-- Dashboard middleware verifies the signed session token before protected routes render.
-
-### Production vs Local Environment
-
-- Local development may leave some Soroban settings unset while the feature is still gated.
-- Production deployments must provide real `JWT_SECRET`, `MONGODB_URI`, `PINATA_JWT`, `NEXT_PUBLIC_APP_URL`, and `NEXT_PUBLIC_GATEWAY_URL` values.
-- Once Soroban features are enabled, production must also provide valid `NEXT_PUBLIC_STELLAR_RPC_URL`, `NEXT_PUBLIC_HORIZON_URL`, and `NEXT_PUBLIC_SOROBAN_CONTRACT_ID`.
-- Preview and production environments should not use placeholder values for any credential-like setting.
-
-## Usage
-
-### Current prototype flow
-
-1. Visit the landing page and connect a wallet.
-2. Create a profile through the wallet onboarding flow.
-3. Upload a document from the dashboard.
-4. Browse materials in the marketplace.
-5. Review listing details and purchase flow prototypes.
-
-### Planned Stellar flow
-
-1. Creator registers a material and pricing terms.
-2. Buyer pays with XLM or a supported Stellar asset.
-3. Soroban records entitlement state.
-4. EduVault verifies entitlement before releasing protected content access.
+- Production deployments must use real values for required secrets.
+- Placeholder secrets should not be used in preview or production environments.
+- Required production values include `JWT_SECRET`, `MONGODB_URI`, `PINATA_JWT`, `NEXT_PUBLIC_APP_URL`, and `NEXT_PUBLIC_GATEWAY_URL`.
+- Once Stellar features are enabled, production must also include valid Stellar RPC, Horizon, and contract configuration.
 
 ## Roadmap
 
-### Near term
+### Near Term
 
-- Finalize README, contribution docs, and maintainership materials
-- Clean up prototype flows and remove stale chain-specific UI references
-- Model the Soroban contract interfaces for registry and entitlement logic
+- Clean up stale chain-specific UI references
+- Improve creator onboarding and material publishing flows
+- Finalize Soroban contract interfaces for registry and entitlement logic
 
-### Next milestone
+### Next Milestone
 
-- Add Stellar wallet support and account-based auth
+- Add Stellar wallet support
 - Deploy Soroban contracts to Stellar testnet
 - Support XLM and USDC-based checkout
 - Gate downloads based on on-chain entitlement state
 - Add creator payout accounting
 
-### Later
+### Future Improvements
 
-- Institution-issued access assets and scholarship credits
+- Educator and institution verification
 - Bulk licensing for schools and learning communities
-- Analytics for creators and cohort-based access controls
-- Optional fiat on/off-ramp integrations through Stellar ecosystem partners
-
-## Future Improvements
-
-- Reputation and verification for educators and institutions
-- Secondary license transfers where policy allows
-- Referral payouts and affiliate tracking
-- Credential issuance for verified learning outcomes
+- Institution-issued access assets and scholarship credits
+- Creator analytics and reporting
 - Mobile-first purchase flow for low-bandwidth environments
-- Moderation and dispute tooling for marketplace integrity
 
-## Contribution Guidelines
+## Contributing
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. High-signal contributions include:
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
-- Product and architecture feedback tied to educational commerce on Stellar
-- Soroban contract design improvements
-- Security reviews for entitlement and payout logic
-- Developer experience improvements for local setup and testing
-- Documentation updates that improve technical clarity
+Good areas to contribute include:
+
+- Stellar wallet integration
+- Soroban contract design
+- Marketplace UI improvements
+- Security reviews for access control and entitlement logic
+- Documentation and developer experience improvements
 
 ## License
 
@@ -348,5 +236,3 @@ This project is licensed under the [MIT License](LICENSE).
 ## Maintainer
 
 Maintained by [Obiajulu-gif](https://github.com/Obiajulu-gif).
-
-For roadmap discussion, architecture questions, or ecosystem collaboration, open an issue or discussion in this repository.

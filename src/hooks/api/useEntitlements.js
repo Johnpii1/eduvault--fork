@@ -12,7 +12,7 @@ export function useEntitlement(materialId) {
 
   return useQuery({
     queryKey: queryKeys.purchases.entitlement(materialId, address),
-    queryFn: () => purchaseService.checkEntitlement(materialId),
+    queryFn: () => purchaseService.checkEntitlement(materialId, address),
     enabled: !!materialId && !!address,
     staleTime: 30 * 60 * 1000, // Entitlements don't change often
     retry: 1,

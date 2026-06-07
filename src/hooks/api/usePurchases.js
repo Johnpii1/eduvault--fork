@@ -12,7 +12,7 @@ export function usePurchaseHistory() {
 export function useCheckEntitlement(materialId, address) {
   return useQuery({
     queryKey: queryKeys.purchases.entitlement(materialId, address),
-    queryFn: () => purchaseService.checkEntitlement(materialId),
+    queryFn: () => purchaseService.checkEntitlement(materialId, address),
     enabled: !!materialId && !!address,
   });
 }

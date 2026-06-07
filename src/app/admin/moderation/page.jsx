@@ -1,6 +1,8 @@
+"use client";
+
 import React, { useState, useEffect } from 'react';
 import './moderation.css';
-import { withAdminGuard } from '../../lib/auth/adminAuth';
+import { withAdminGuard } from '@/lib/auth/adminAuth';
 
 /**
  * Mock fetch for flagged items – in real code this would call the backend.

@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-// We test wallConnectEnabled directly; full wagmi config requires a browser
+// We test walletConnectEnabled directly; full wagmi config requires a browser
 // environment that wagmi itself sets up, so we isolate the guard logic.
 
 describe('WalletConnect connector guard (#112)', () => {
@@ -22,25 +22,25 @@ describe('WalletConnect connector guard (#112)', () => {
 
   it('disables WalletConnect when NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID is unset', async () => {
     delete process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
-    const { walletConnectEnabled } = await import('./config.js');
+    const { walletConnectEnabled } = await import('./configGuard.js');
     expect(walletConnectEnabled).toBe(false);
   });
 
   it('disables WalletConnect when project ID is the placeholder string', async () => {
     process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID = 'YOUR_PROJECT_ID';
-    const { walletConnectEnabled } = await import('./config.js');
+    const { walletConnectEnabled } = await import('./configGuard.js');
     expect(walletConnectEnabled).toBe(false);
   });
 
   it('disables WalletConnect when project ID is an empty string', async () => {
     process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID = '';
-    const { walletConnectEnabled } = await import('./config.js');
+    const { walletConnectEnabled } = await import('./configGuard.js');
     expect(walletConnectEnabled).toBe(false);
   });
 
   it('enables WalletConnect when a real project ID is set', async () => {
     process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID = 'abc123realprojectid';
-    const { walletConnectEnabled } = await import('./config.js');
+    const { walletConnectEnabled } = await import('./configGuard.js');
     expect(walletConnectEnabled).toBe(true);
   });
 });

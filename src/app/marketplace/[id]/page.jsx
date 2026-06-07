@@ -15,6 +15,8 @@ import Web3ErrorBoundary from "@/components/web3/Web3ErrorBoundary";
 import SaveMaterialButton from "@/components/materials/SaveMaterialButton";
 import { trackRecentlyViewed } from "@/hooks/useRecentlyViewed";
 import RecommendedMaterials from "@/components/materials/RecommendedMaterials";
+import MaterialReviewPanel from "@/components/materials/MaterialReviewPanel";
+import { useAccount } from "wagmi";
 
 function getPreviewImage(material) {
 	return material.coverImageUrl || material.thumbnailUrl || material.image || "/images/image2.jpg";
@@ -66,8 +68,9 @@ export default function MaterialDetailsPage() {
 	const [showBuyModal, setShowBuyModal] = useState(false);
 	const materialQuery = useMaterialDetail(id);
 	const entitlementQuery = useEntitlement(id);
+	const { address } = useAccount();
 
-	const isOwned = entitlementQuery.data?.owned || false;
+	const isOwned = Boolean(entitlementQuery.data?.owned || entitlementQuery.data?.hasAccess);
 
 	useEffect(() => {
 		if (materialQuery.data) {
@@ -304,6 +307,13 @@ export default function MaterialDetailsPage() {
 									</ul>
 								</div>
 							</div>
+
+							<MaterialReviewPanel
+								materialId={id}
+								initialReviews={material.reviews || material.reviewHistory || []}
+								entitlement={entitlementQuery}
+								currentAddress={address}
+							/>
 
 							{/* Recommendations */}
 							{materialQuery.data && (

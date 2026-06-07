@@ -1,6 +1,8 @@
 import { http, createConfig } from 'wagmi';
 import { walletConnect, injected, coinbaseWallet } from 'wagmi/connectors';
 import { SUPPORTED_CHAINS } from './chains';
+export { walletConnectEnabled } from './configGuard';
+import { walletConnectEnabled } from './configGuard';
 
 // ── WalletConnect is optional. ─────────────────────────────────────────────────
 // Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in your environment to enable it.
@@ -8,14 +10,6 @@ import { SUPPORTED_CHAINS } from './chains';
 // so that next build does NOT trigger a remote Reown/Web3Modal config fetch.
 // See .env.example for details.
 const _rawProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '';
-const PLACEHOLDER = 'YOUR_PROJECT_ID';
-
-/**
- * True only when a real WalletConnect project ID has been configured.
- * Exported so tests can assert on the resolved connector list.
- */
-export const walletConnectEnabled =
-  _rawProjectId.length > 0 && _rawProjectId !== PLACEHOLDER;
 
 // Define supported chains — shared config from chains.js
 export const chains = SUPPORTED_CHAINS;
