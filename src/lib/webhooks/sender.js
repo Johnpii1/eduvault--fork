@@ -1,6 +1,53 @@
 import { getDb } from '@/lib/mongodb';
 import { logger } from '@/lib/logger';
 
+export async function getDailyStats(db) {
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+  const completedStatuses = ['confirmed', 'settled', 'completed'];
+
+  const salesAgg = await (
+    await db.collection('purchases').aggregate([
+      {
+        $match: {
+          status: { $in: completedStatuses },
+          purchasedAt: { $gte: yesterday, $lte: now },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: { $toDouble: '$amount' } },
+          count: { $sum: 1 },
+        },
+      },
+    ])
+  ).toArray();
+
+  const signupsAgg = await (
+    await db.collection('users').aggregate([
+      {
+        $match: {
+          createdAt: { $gte: yesterday, $lte: now },
+        },
+      },
+      { $count: 'count' },
+    ])
+  ).toArray();
+
+  const activeMaterials = await db.collection('materials').countDocuments({
+    visibility: { $ne: 'private' },
+  });
+
+  return {
+    volume: salesAgg[0]?.total ?? 0,
+    totalSales: salesAgg[0]?.count ?? 0,
+    signups: signupsAgg[0]?.count ?? 0,
+    activeMaterials,
+  };
+}
+
 export async function sendWebhookWithRetry(url, payload, retries = 3) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {

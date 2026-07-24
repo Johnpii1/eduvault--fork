@@ -5,6 +5,8 @@ export const COLLECTIONS = {
   entitlementCache: "entitlement_cache",
   syncState: "sync_state",
   syncEvents: "sync_events",
+  collections: "collections",
+  progress: "progress",
   deadLetterEvents: "dead_letter_events",
   materialHistory: "material_history",
   savedMaterials: "saved_materials",
@@ -19,6 +21,8 @@ export const REQUIRED_INDEXES = {
     { keys: { userAddress: 1, createdAt: -1 } },
     { keys: { visibility: 1, createdAt: -1 } },
     { keys: { materialId: 1 }, options: { sparse: true } },
+    { keys: { tokenId: 1 }, options: { unique: true, sparse: true } },
+    { keys: { txHash: 1 }, options: { unique: true, sparse: true } },
     { keys: { updatedAt: -1 } },
     { keys: { category: 1 } },
     { keys: { subject: 1 } },
@@ -36,6 +40,13 @@ export const REQUIRED_INDEXES = {
   ],
   sync_state: [{ keys: { source: 1 }, options: { unique: true } }],
   sync_events: [{ keys: { _id: 1 }, options: { unique: true } }],
+  collections: [
+    { keys: { creatorId: 1, createdAt: -1 } },
+  ],
+  progress: [
+    { keys: { userId: 1, materialId: 1 }, options: { unique: true } },
+    { keys: { completedAt: -1 } },
+  ],
   dead_letter_events: [
     { keys: { _id: 1 }, options: { unique: true } },
     { keys: { status: 1 } },
@@ -89,6 +100,7 @@ export function buildMaterialHistoryEntry({ materialId, previousDoc, update, upd
   return {
     materialId,
     changes,
+    version: (previousDoc?.version || 1) + 1,
     updatedBy,
     updatedAt: new Date(),
     changeReason: changeReason || null,

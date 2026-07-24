@@ -79,7 +79,13 @@ function buildContentTypeQuery(value) {
 }
 
 export function buildMarketplaceDiscoveryQuery(searchParams, { now = new Date() } = {}) {
-  const query = { visibility: "public" };
+  const query = {
+    visibility: "public",
+    $or: [
+      { relevanceStatus: { $exists: false } },
+      { relevanceStatus: { $ne: "low" } },
+    ],
+  };
   const andClauses = [];
 
   const search = sanitizeString(searchParams.get("search"), { maxLength: 120 });

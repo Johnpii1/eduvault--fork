@@ -1,15 +1,29 @@
 // Resolves: Configure efficient MongoDB connection pooling in the Next.js API routes to handle concurrent requests.
+import { cpus } from "node:os";
 import { MongoClient } from "mongodb";
 
 const uri = process.env.MONGODB_URI;
 
-// Environment-driven pool configurations with sane defaults
-const maxPoolSize = parseInt(process.env.MONGODB_MAX_POOL_SIZE || "100", 10);
-const minPoolSize = parseInt(process.env.MONGODB_MIN_POOL_SIZE || "10", 10);
+// Scale pool size to active CPU count so connection limits grow with the host.
+// Allow env overrides for environments where auto-detection is insufficient.
+const CPU_COUNT = cpus().length;
+const maxPoolSize = parseInt(
+  process.env.MONGODB_MAX_POOL_SIZE || String(CPU_COUNT * 5),
+  10,
+);
+const minPoolSize = parseInt(
+  process.env.MONGODB_MIN_POOL_SIZE || String(CPU_COUNT),
+  10,
+);
 const serverSelectionTimeoutMS = parseInt(
   process.env.MONGODB_TIMEOUT_MS || "5000",
   10,
 ); // Fail fast
+// How often the driver pings each server to confirm connectivity.
+const heartbeatFrequencyMS = parseInt(
+  process.env.MONGODB_HEARTBEAT_MS || "10000",
+  10,
+);
 
 const globalForMongo = globalThis;
 
@@ -27,7 +41,7 @@ function getClientPromise() {
         maxPoolSize,
         minPoolSize,
         serverSelectionTimeoutMS,
-        // For high load:
+        heartbeatFrequencyMS,
         maxIdleTimeMS: 30000,
       });
 

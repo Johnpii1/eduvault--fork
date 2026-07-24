@@ -8,6 +8,7 @@ import { parsePagination } from "@/lib/api/validation";
 import { buildMarketplaceDiscoveryQuery, buildMarketplaceSort } from "@/lib/backend/marketplaceDiscovery";
 import { getDb } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
+import { cacheGet, cacheSet } from "@/lib/cache/redis";
 
 export const runtime = "nodejs";
 
@@ -61,6 +62,12 @@ export async function GET(request) {
     // 2️⃣ Handle list fetch
     const { page, pageSize } = parsePagination(url.searchParams);
 
+    const cacheKey = `market-materials:${url.searchParams.toString()}`;
+    const cached = await cacheGet(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached, { status: 200 });
+    }
+
     const query = buildMarketplaceDiscoveryQuery(url.searchParams);
     const sort = buildMarketplaceSort(url.searchParams.get("sortBy"));
 
@@ -77,10 +84,10 @@ export async function GET(request) {
 
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-    return NextResponse.json(
-      { items: normalized, page, pageSize, total, totalPages },
-      { status: 200 }
-    );
+    const payload = { items: normalized, page, pageSize, total, totalPages };
+    await cacheSet(cacheKey, payload, 600);
+
+    return NextResponse.json(payload, { status: 200 });
   } catch (err) {
     if (err.name === "ValidationError") throw err;
     auditLog({ event: "market_materials_failed", route: "market-materials", method: "GET", status: 500, reason: err.message });

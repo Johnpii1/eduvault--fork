@@ -12,10 +12,12 @@ import TransactionStatusPanel from "@/components/transactions/TransactionStatusP
 import DragDropUpload from "@/components/DragDropUpload";
 import { useTransactionCenter } from "@/providers/TransactionProvider";
 import { TransactionStatus } from "@/lib/transactions/transaction";
+import PayoutSplits from "@/components/PayoutSplits";
 
 export default function UploadForm() {
   const { state } = useWallet();
-  const address = state.status === WalletStatus.Connected ? state.session.address : null;
+  const address =
+    state.status === WalletStatus.Connected ? state.session.address : null;
   const uploadFileMutation = useUploadFile();
   const createMaterialMutation = useCreateMaterial();
   const {
@@ -30,8 +32,13 @@ export default function UploadForm() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
-  const [usageRights, setUsageRights] = useState("Standard License (download only)");
+  const [usageRights, setUsageRights] = useState(
+    "Standard License (download only)",
+  );
   const [visibility, setVisibility] = useState("public");
+  const [level, setLevel] = useState("");
+
+  const [savedUploadData, setSavedUploadData] = useState(null);
 
   const [docFile, setDocFile] = useState(null);
   const [docFileName, setDocFileName] = useState(null);
@@ -45,6 +52,8 @@ export default function UploadForm() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
+  const [payoutSplits, setPayoutSplits] = useState(null);
+  const [payoutSplitsValid, setPayoutSplitsValid] = useState(true);
 
   const handleDocChange = (e) => {
     const file = e.target.files?.[0];
@@ -108,6 +117,10 @@ export default function UploadForm() {
       }
     }
 
+    if (!payoutSplitsValid) {
+      errors.payoutSplits = "Payout splits must be valid and total 100%.";
+    }
+
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
       failTransaction(new Error(Object.values(errors).join(" ")), {
@@ -126,11 +139,14 @@ export default function UploadForm() {
 
     if (!address) {
       setError("Please connect your wallet to upload a material.");
-      failTransaction(new Error("Please connect your wallet to upload a material."), {
-        title: "Wallet required",
-        message: "Connect your wallet before publishing this material.",
-        retryable: true,
-      });
+      failTransaction(
+        new Error("Please connect your wallet to upload a material."),
+        {
+          title: "Wallet required",
+          message: "Connect your wallet before publishing this material.",
+          retryable: true,
+        },
+      );
       return;
     }
 
@@ -140,30 +156,60 @@ export default function UploadForm() {
         message: "Uploading files and creating the on-chain record.",
       });
 
-      const formData = new FormData();
-      formData.append("file", docFile);
-      if (thumbFile && thumbPreview && croppedPixels) {
-        const croppedBlob = await getCroppedImageBlob(
-          thumbPreview,
-          croppedPixels,
-          thumbFile.type || "image/jpeg",
-        );
-        formData.append("thumbnail", croppedBlob, `thumb-cropped.${thumbFile.type?.split("/")[1] || "jpg"}`);
-      } else if (thumbFile) {
-        formData.append("thumbnail", thumbFile);
-      }
-      formData.append("name", title);
-      formData.append("description", description);
-      formData.append("price", price);
-      formData.append("usageRights", usageRights);
-      formData.append("visibility", visibility);
-      formData.append("owner", address);
+      let uploadData = savedUploadData;
+      if (!uploadData) {
+        const formData = new FormData();
+        formData.append("file", docFile);
+        if (thumbFile && thumbPreview && croppedPixels) {
+          const croppedBlob = await getCroppedImageBlob(
+            thumbPreview,
+            croppedPixels,
+            thumbFile.type || "image/jpeg",
+          );
+          formData.append(
+            "thumbnail",
+            croppedBlob,
+            `thumb-cropped.${thumbFile.type?.split("/")[1] || "jpg"}`,
+          );
+        } else if (thumbFile) {
+          formData.append("thumbnail", thumbFile);
+        }
+        formData.append("name", title);
+        formData.append("description", description);
+        formData.append("price", price);
+        formData.append("usageRights", usageRights);
+        formData.append("visibility", visibility);
+        formData.append("owner", address);
 
-      // 1. Upload to Pinata
-      const uploadData = await uploadFileMutation.mutateAsync(formData);
+        // 1. Upload to Pinata with retry logic
+        let attempt = 0;
+        const maxAttempts = 3;
+        const initialDelay = 1000;
 
-      if (!uploadData?.metadata) {
-        throw new Error("File upload failed");
+        while (true) {
+          attempt++;
+          try {
+            uploadData = await uploadFileMutation.mutateAsync(formData);
+            
+            if (uploadData?.metadata) {
+              break; // Success!
+            }
+            throw new Error("File upload failed: No metadata returned");
+          } catch (err) {
+            const isRetriableStatus = !err.status || [429, 500, 502, 503, 504].includes(err.status);
+            if (attempt >= maxAttempts || !isRetriableStatus) {
+              throw err;
+            }
+          }
+
+          const backoffDelay = initialDelay * Math.pow(2, attempt - 1);
+          console.warn(`Upload attempt ${attempt} failed. Retrying in ${backoffDelay}ms...`);
+          setError(`Upload attempt ${attempt} failed. Retrying...`);
+          await new Promise((resolve) => setTimeout(resolve, backoffDelay));
+          setError(null);
+        }
+
+        setSavedUploadData(uploadData);
       }
 
       markStatus(TransactionStatus.PendingConfirmation, {
@@ -178,10 +224,12 @@ export default function UploadForm() {
         price,
         usageRights,
         visibility,
+        level: level || undefined,
         storageKey: uploadData.storageKey,
         thumbnail: uploadData.image,
         metadataUrl: uploadData.metadata,
         creator: address,
+        payoutSplits: payoutSplits || undefined,
       });
 
       confirmTransaction({
@@ -189,13 +237,12 @@ export default function UploadForm() {
         message: "Your material is now available in the marketplace.",
       });
 
-      setSuccess(
-        "Document uploaded successfully and record created!"
-      );
+      setSuccess("Document uploaded successfully and record created!");
       // Reset form
       setTitle("");
       setDescription("");
       setPrice("");
+      setLevel("");
       setDocFile(null);
       setDocFileName(null);
       setThumbFile(null);
@@ -204,18 +251,34 @@ export default function UploadForm() {
       setThumbCrop({ x: 0, y: 0 });
       setThumbZoom(1);
       setCroppedPixels(null);
+      setSavedUploadData(null);
     } catch (err) {
       console.error("Upload Error:", err);
-      setError(err?.message || "Something went wrong. Please try again.");
+      let friendlyError = err?.message || "Something went wrong. Please try again.";
+      if (friendlyError.includes("exceeds the 10MB limit") || friendlyError.includes("exceeds the 50MB limit")) {
+        friendlyError = "The selected document exceeds the file size limit. Please choose a smaller file.";
+      } else if (friendlyError.includes("exceeds the 5MB limit")) {
+        friendlyError = "The selected thumbnail exceeds the 5MB limit. Please choose a smaller image.";
+      } else if (friendlyError.includes("Unsupported file type") || friendlyError.includes("Unsupported file format")) {
+        friendlyError = "The file type is not supported. Please upload a PDF, Word document, Excel sheet, PowerPoint presentation, text file, or ZIP archive.";
+      } else if (friendlyError.includes("Unsupported thumbnail type")) {
+        friendlyError = "The thumbnail image format is not supported. Please use JPG, PNG, or WEBP.";
+      } else if (friendlyError.includes("fetch") || friendlyError.includes("Failed to fetch") || friendlyError.toLowerCase().includes("network")) {
+        friendlyError = "Network error: Could not reach the upload server. Please check your internet connection.";
+      } else if (friendlyError.toLowerCase().includes("too many requests") || friendlyError.toLowerCase().includes("rate limit") || friendlyError.includes("429")) {
+        friendlyError = "Rate limit exceeded: You've made too many requests. Please wait a bit and try again.";
+      }
+      setError(friendlyError);
       failTransaction(err instanceof Error ? err : new Error(String(err)), {
         title: "Publish failed",
-        message: err?.message || "Something went wrong. Please try again.",
+        message: friendlyError,
         retryable: true,
       });
     }
   };
 
-  const submitting = uploadFileMutation.isPending || createMaterialMutation.isPending;
+  const submitting =
+    uploadFileMutation.isPending || createMaterialMutation.isPending;
 
   return (
     <form
@@ -224,7 +287,9 @@ export default function UploadForm() {
     >
       <h2 className="text-xl font-bold mb-6">Create a New Study Resource</h2>
       <p className="text-sm text-gray-600 mb-8">
-        Upload lecture notes, projects, or past questions. The active chain layer is moving to Soroban, so this form handles file storage and cataloging.
+        Upload lecture notes, projects, or past questions. The active chain
+        layer is moving to Soroban, so this form handles file storage and
+        cataloging.
       </p>
 
       <div className="mb-5">
@@ -240,12 +305,16 @@ export default function UploadForm() {
           aria-describedby={fieldErrors.title ? "title-error" : undefined}
         />
         {fieldErrors.title && (
-          <p id="title-error" className="text-red-600 text-xs mt-1">{fieldErrors.title}</p>
+          <p id="title-error" className="text-red-600 text-xs mt-1">
+            {fieldErrors.title}
+          </p>
         )}
       </div>
 
       <div className="mb-5">
-        <label className="block text-sm font-medium mb-2">Short Description</label>
+        <label className="block text-sm font-medium mb-2">
+          Short Description
+        </label>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -253,10 +322,14 @@ export default function UploadForm() {
           rows={3}
           maxLength={5000}
           className={`w-full border rounded-md px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 ${fieldErrors.description ? "border-red-500" : "border-gray-300"}`}
-          aria-describedby={fieldErrors.description ? "description-error" : undefined}
+          aria-describedby={
+            fieldErrors.description ? "description-error" : undefined
+          }
         />
         {fieldErrors.description && (
-          <p id="description-error" className="text-red-600 text-xs mt-1">{fieldErrors.description}</p>
+          <p id="description-error" className="text-red-600 text-xs mt-1">
+            {fieldErrors.description}
+          </p>
         )}
       </div>
 
@@ -265,12 +338,16 @@ export default function UploadForm() {
         <div className="flex flex-col gap-4">
           {!thumbPreview && (
             <DragDropUpload
-              onFileSelect={(file) => handleThumbChange({ target: { files: [file] } })}
+              onFileSelect={(file) =>
+                handleThumbChange({ target: { files: [file] } })
+              }
               error={fieldErrors.thumb}
             />
           )}
           {fieldErrors.thumb && (
-            <p id="thumb-error" className="text-red-600 text-xs mt-1">{fieldErrors.thumb}</p>
+            <p id="thumb-error" className="text-red-600 text-xs mt-1">
+              {fieldErrors.thumb}
+            </p>
           )}
           {thumbPreview && showCropper && (
             <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
@@ -343,11 +420,15 @@ export default function UploadForm() {
       </div>
 
       <div className="mb-5">
-        <label className="block text-sm font-medium mb-2">Upload Your File</label>
+        <label className="block text-sm font-medium mb-2">
+          Upload Your File
+        </label>
         <p className="text-xs text-gray-500 mb-2">
           Max file size: 50MB. Accepted types: PDF, ZIP, EPUB, MP4.
         </p>
-        <div className={`border-2 border-dashed rounded-lg p-6 text-center transition ${fieldErrors.file ? "border-red-500 hover:border-red-600 bg-red-50" : "border-gray-300 hover:border-blue-400"}`}>
+        <div
+          className={`border-2 border-dashed rounded-lg p-6 text-center transition ${fieldErrors.file ? "border-red-500 hover:border-red-600 bg-red-50" : "border-gray-300 hover:border-blue-400"}`}
+        >
           <input
             type="file"
             id="file-upload"
@@ -374,21 +455,23 @@ export default function UploadForm() {
                 </>
               )}
             </p>
-            <div
-              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700"
-            >
+            <div className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">
               Choose File
             </div>
           </label>
         </div>
         {fieldErrors.file && (
-          <p id="file-error" className="text-red-600 text-xs mt-1">{fieldErrors.file}</p>
+          <p id="file-error" className="text-red-600 text-xs mt-1">
+            {fieldErrors.file}
+          </p>
         )}
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-4 mb-5">
+      <div className="grid sm:grid-cols-3 gap-4 mb-5">
         <div>
-          <label className="block text-sm font-medium mb-2">Set Your Price (optional)</label>
+          <label className="block text-sm font-medium mb-2">
+            Set Your Price (optional)
+          </label>
           <input
             type="number"
             value={price}
@@ -400,7 +483,9 @@ export default function UploadForm() {
             aria-describedby={fieldErrors.price ? "price-error" : undefined}
           />
           {fieldErrors.price && (
-            <p id="price-error" className="text-red-600 text-xs mt-1">{fieldErrors.price}</p>
+            <p id="price-error" className="text-red-600 text-xs mt-1">
+              {fieldErrors.price}
+            </p>
           )}
         </div>
         <div>
@@ -413,6 +498,20 @@ export default function UploadForm() {
             <option>Standard License (download only)</option>
             <option>Creative Commons</option>
             <option>Private Use Only</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-2">Level</label>
+          <select
+            value={level}
+            onChange={(e) => setLevel(e.target.value)}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-100 focus:border-blue-500"
+          >
+            <option value="">Select Level</option>
+            <option value="beginner">Beginner</option>
+            <option value="intermediate">Intermediate</option>
+            <option value="advanced">Advanced</option>
+            <option value="all-levels">All Levels</option>
           </select>
         </div>
       </div>
@@ -445,6 +544,21 @@ export default function UploadForm() {
         </div>
       </div>
 
+      <div className="mb-6">
+        <PayoutSplits
+          onChange={(splits, isValid) => {
+            setPayoutSplits(splits);
+            setPayoutSplitsValid(isValid);
+          }}
+          initialSplits={payoutSplits || []}
+        />
+        {fieldErrors.payoutSplits && (
+          <p className="text-red-600 text-xs mt-2">
+            {fieldErrors.payoutSplits}
+          </p>
+        )}
+      </div>
+
       {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
       {success && <p className="text-green-600 text-sm mb-4">{success}</p>}
 
@@ -466,7 +580,9 @@ export default function UploadForm() {
             ? "Awaiting confirmation..."
             : submitting
               ? "Processing..."
-              : "Submit Upload"}
+              : savedUploadData
+                ? "Retry Publishing"
+                : "Submit Upload"}
         </button>
       </div>
     </form>
