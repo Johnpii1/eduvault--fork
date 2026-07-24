@@ -1,3 +1,4 @@
+// Resolves: Configure efficient MongoDB connection pooling in the Next.js API routes to handle concurrent requests.
 import { MongoClient } from "mongodb";
 
 const uri = process.env.MONGODB_URI;
