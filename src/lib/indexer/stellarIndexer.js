@@ -1,4 +1,6 @@
 import { COLLECTIONS } from "../backend/schemaContracts.js";
+import { sendReceiptIfEligible } from "../email.js";
+
 
 function duplicateKey(error) {
   return error?.code === 11000;
@@ -94,6 +96,14 @@ export async function applyIndexedEvent(db, event, { now = new Date() } = {}) {
       },
       { upsert: true }
     );
+
+    const purchase = await db.collection(COLLECTIONS.purchases).findOne({
+      materialId: event.materialId,
+      buyerAddress,
+    });
+    if (purchase) {
+      sendReceiptIfEligible(db, purchase._id).catch(err => console.error(err));
+    }
   }
 
   return { eventId: id, skipped: !!alreadyIndexed };
