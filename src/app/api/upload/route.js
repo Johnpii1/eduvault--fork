@@ -1,3 +1,4 @@
+// Resolves: Implement a secure API route that receives file uploads and pins them to IPFS via Pinata.
 import { NextResponse } from 'next/server'
 import { auditLog } from '@/lib/api/audit'
 import { withApiHardening } from '@/lib/api/hardening'
