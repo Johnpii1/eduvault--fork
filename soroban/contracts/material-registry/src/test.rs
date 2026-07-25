@@ -93,7 +93,20 @@ fn seed_material(
         created_ledger: env.ledger().sequence(),
         updated_ledger: env.ledger().sequence(),
     };
-    env.as_contract(contract_id, || put_material(env, &record));
+    env.as_contract(contract_id, || {
+        put_material_core(
+            env,
+            material_id,
+            &MaterialCore {
+                creator: record.creator.clone(),
+                metadata_uri: record.metadata_uri.clone(),
+                metadata_hash: record.metadata_hash.clone(),
+                rights_hash: record.rights_hash.clone(),
+                created_ledger: record.created_ledger,
+            },
+        );
+        put_material_sale(env, material_id, &sale_state_from_record(&record));
+    });
     record
 }
 
@@ -681,4 +694,107 @@ fn first_registration_skips_asset_validation() {
     );
     // Should succeed even though no assets are pre-approved.
     assert!(result.is_ok());
+}
+
+// ============== Storage cost comparison (#255) ==============
+//
+// Sale-term/status updates are the most frequent write path in the registry
+// (price changes, pausing, archiving), far outnumbering initial
+// registrations over a material's lifetime. Prior to the MaterialCore /
+// MaterialSaleState split, every one of those updates rewrote the *entire*
+// record — creator, metadata_uri (up to 256 bytes), both 32-byte hashes, and
+// created_ledger — none of which ever change after registration. This test
+// measures the write cost of that legacy single-entry shape against the new
+// split layout's update path, using the SDK's invocation cost metering.
+
+/// Mirrors the pre-#255 combined storage entry: every field the registry
+/// used to rewrite on every single call, including the redundant
+/// `material_id` (already implied by the storage key).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LegacyMaterialRecord {
+    material_id: BytesN<32>,
+    creator: Address,
+    metadata_uri: String,
+    metadata_hash: BytesN<32>,
+    rights_hash: BytesN<32>,
+    paused: bool,
+    status: MaterialStatus,
+    quotes: Vec<AssetQuote>,
+    payout_shares: Vec<PayoutShare>,
+    created_ledger: u32,
+    updated_ledger: u32,
+}
+
+#[contracttype]
+#[derive(Clone)]
+enum LegacyDataKey {
+    Material(BytesN<32>),
+}
+
+#[test]
+fn sale_term_update_write_cost_drops_at_least_20_percent_vs_legacy_layout() {
+    let env = Env::default();
+    let (contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let material_id = client.register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &default_quotes(&env),
+        &default_payout_shares(&env),
+    );
+
+    let next_quotes = replacement_quotes(&env);
+    let tracked_asset = next_quotes.get_unchecked(0).asset.clone();
+    let next_payout_shares = replacement_payout_shares(&env);
+    // Approve the replacement asset before updating sale terms — the
+    // upgrade-admin is the first creator; auth is mocked for the whole test.
+    client.set_asset_allowed(&creator, &tracked_asset, &AssetKind::Token, &true);
+
+    // Baseline: cost of rewriting the legacy single-entry record shape, as
+    // the pre-#255 `update_sale_terms` implementation used to do on every
+    // sale-term update.
+    let legacy_record = LegacyMaterialRecord {
+        material_id: material_id.clone(),
+        creator: creator.clone(),
+        metadata_uri: metadata_uri(&env),
+        metadata_hash: bytes32(&env, 1),
+        rights_hash: bytes32(&env, 2),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: next_quotes.clone(),
+        payout_shares: next_payout_shares.clone(),
+        created_ledger: env.ledger().sequence(),
+        updated_ledger: env.ledger().sequence(),
+    };
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&LegacyDataKey::Material(material_id.clone()), &legacy_record);
+    });
+    let legacy_write_bytes = env.cost_estimate().resources().write_bytes;
+
+    // New: cost of the actual `update_sale_terms` call, which now only
+    // rewrites the MaterialSale entry.
+    client.update_sale_terms(&material_id, &next_quotes, &next_payout_shares);
+    let split_write_bytes = env.cost_estimate().resources().write_bytes;
+
+    std::println!(
+        "material-registry storage comparison — legacy single-entry write: {} bytes; \
+         split MaterialSale-only write: {} bytes ({:.1}% reduction)",
+        legacy_write_bytes,
+        split_write_bytes,
+        100.0 * (1.0 - (split_write_bytes as f64 / legacy_write_bytes as f64))
+    );
+
+    assert!(
+        (split_write_bytes as f64) <= (legacy_write_bytes as f64) * 0.8,
+        "expected at least a 20% reduction in write bytes: legacy={} split={}",
+        legacy_write_bytes,
+        split_write_bytes,
+    );
 }

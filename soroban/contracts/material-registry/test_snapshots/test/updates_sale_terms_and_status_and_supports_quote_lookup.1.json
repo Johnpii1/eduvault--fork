@@ -337,7 +337,7 @@
               "key": {
                 "vec": [
                   {
-                    "symbol": "Material"
+                    "symbol": "MaterialCore"
                   },
                   {
                     "bytes": "f258f52ef1fdcadc3bca37cb395dfa5a70f8ab04448f20d3a93149c94267ddb9"
@@ -365,14 +365,6 @@
                   },
                   {
                     "key": {
-                      "symbol": "material_id"
-                    },
-                    "val": {
-                      "bytes": "f258f52ef1fdcadc3bca37cb395dfa5a70f8ab04448f20d3a93149c94267ddb9"
-                    }
-                  },
-                  {
-                    "key": {
                       "symbol": "metadata_hash"
                     },
                     "val": {
@@ -387,6 +379,42 @@
                       "string": "ipfs://eduvault/material/intro-to-soroban"
                     }
                   },
+                  {
+                    "key": {
+                      "symbol": "rights_hash"
+                    },
+                    "val": {
+                      "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "MaterialSale"
+                  },
+                  {
+                    "bytes": "f258f52ef1fdcadc3bca37cb395dfa5a70f8ab04448f20d3a93149c94267ddb9"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "map": [
                   {
                     "key": {
                       "symbol": "paused"
@@ -451,14 +479,6 @@
                           ]
                         }
                       ]
-                    }
-                  },
-                  {
-                    "key": {
-                      "symbol": "rights_hash"
-                    },
-                    "val": {
-                      "bytes": "0505050505050505050505050505050505050505050505050505050505050505"
                     }
                   },
                   {
