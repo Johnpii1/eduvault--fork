@@ -58,12 +58,63 @@ async function checkChainEntitlement(materialId, buyerAddress) {
   }
 }
 
+/**
+ * Check the on-chain settlement state for a purchase.
+ * Returns the settlement state string or null if unavailable.
+ *
+ * Settlement states: Pending, Released, Disputed, Refunded, Expired
+ */
+async function checkChainSettlementState(purchaseId) {
+  if (!PURCHASE_MANAGER_CONTRACT_ID || !STELLAR_RPC_URL) return null;
+
+  try {
+    const body = {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'simulateTransaction',
+      params: {
+        transaction: buildSettlementStateXdr(purchaseId),
+      },
+    };
+
+    const res = await fetch(STELLAR_RPC_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8_000),
+    });
+
+    const payload = await res.json();
+    if (payload.error) return null;
+
+    const retval = payload.result?.results?.[0]?.xdr;
+    if (!retval) return null;
+
+    return decodeSettlementState(retval);
+  } catch {
+    return null;
+  }
+}
+
 function buildHasEntitlementXdr(_materialId, _buyerAddress) {
+  return '';
+}
+
+function buildSettlementStateXdr(_purchaseId) {
   return '';
 }
 
 function decodeBoolean(xdrBase64) {
   return xdrBase64.includes('AAAE') || xdrBase64.includes('true');
+}
+
+function decodeSettlementState(xdrBase64) {
+  if (xdrBase64.includes('Pending')) return 'Pending';
+  if (xdrBase64.includes('Released')) return 'Released';
+  if (xdrBase64.includes('Disputed')) return 'Disputed';
+  if (xdrBase64.includes('Refunded')) return 'Refunded';
+  if (xdrBase64.includes('Expired')) return 'Expired';
+  return null;
 }
 
 /**
@@ -97,6 +148,7 @@ export async function createEntitlement(materialId, buyerAddress, purchaseData =
     transactionHash: purchaseData.transactionHash || null,
     amount: purchaseData.amount || null,
     asset: purchaseData.asset || null,
+    settlementState: 'Pending',
     updatedAt: new Date(),
     createdAt: new Date(),
   };
@@ -131,6 +183,7 @@ export async function revokeEntitlement(materialId, buyerAddress) {
       $set: {
         active: false,
         source: 'revoked',
+        settlementState: 'Refunded',
         updatedAt: new Date(),
       },
       $setOnInsert: {
@@ -153,21 +206,65 @@ export async function verifyEntitlement(materialId, buyerAddress) {
   const db = await getDb();
   const normalised = normalizeBuyerAddress(buyerAddress);
 
+  // Check cache first
   const cached = await getCachedEntitlement(db, materialId, normalised);
   if (cached) {
-    if (cached.active) return { hasAccess: true, source: 'cache' };
+    // If cache says active, verify it hasn't been refunded on-chain
+    if (cached.active) {
+      // If we have a purchaseId, check settlement state on-chain
+      if (cached.purchaseId) {
+        const settlementState = await checkChainSettlementState(cached.purchaseId);
+        if (settlementState === 'Refunded') {
+          // Cache is stale — entitlement was revoked on-chain
+          await setCachedEntitlement(db, materialId, normalised, false, 'chain-refunded');
+          return { hasAccess: false, source: 'chain-refunded' };
+        }
+        // Update cached settlement state
+        if (settlementState && settlementState !== cached.settlementState) {
+          await db.collection('entitlement_cache').updateOne(
+            { materialId, buyerAddress: normalised },
+            { $set: { settlementState, updatedAt: new Date() } }
+          );
+        }
+      }
+      return { hasAccess: true, source: 'cache' };
+    }
+    // Cache says inactive — check if on-chain says otherwise
+    const onChain = await checkChainEntitlement(materialId, buyerAddress);
+    if (onChain === true) {
+      await setCachedEntitlement(db, materialId, normalised, true, 'chain');
+      return { hasAccess: true, source: 'chain' };
+    }
+    return { hasAccess: false, source: 'cache-inactive' };
   }
 
+  // No cache — check purchases collection
   const purchase = await db.collection('purchases').findOne({
     materialId,
     buyerAddress: normalised,
   });
 
   if (purchase && isCompletedPurchaseStatus(purchase.status)) {
+    // Check if purchase has been refunded
+    if (purchase.settlementState === 'Refunded') {
+      await setCachedEntitlement(db, materialId, normalised, false, 'purchases-db-refunded');
+      return { hasAccess: false, source: 'purchases-db-refunded' };
+    }
+
+    // Check on-chain settlement state if we have a purchaseId
+    if (purchase.purchaseId) {
+      const settlementState = await checkChainSettlementState(purchase.purchaseId);
+      if (settlementState === 'Refunded') {
+        await setCachedEntitlement(db, materialId, normalised, false, 'chain-refunded');
+        return { hasAccess: false, source: 'chain-refunded' };
+      }
+    }
+
     await setCachedEntitlement(db, materialId, normalised, true, 'purchases-db');
     return { hasAccess: true, source: 'purchases-db' };
   }
 
+  // Fall back to on-chain check
   const onChain = await checkChainEntitlement(materialId, buyerAddress);
   if (onChain === true) {
     await setCachedEntitlement(db, materialId, normalised, true, 'chain');

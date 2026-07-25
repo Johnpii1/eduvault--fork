@@ -11,6 +11,7 @@ const BASIS_POINTS: u32 = 10_000;
 const MAX_PLATFORM_FEE_BPS: u32 = 1_000;
 const MAX_PAYOUT_RECIPIENTS: u32 = 5;
 const ESCROW_LOCK_PERIOD_LEDGERS: u32 = 35_000;
+const DISPUTE_WINDOW_LEDGERS: u32 = 30_000;
 
 /// Volume-tier discounted fee rates (basis points).
 /// Tier 1: 2.5 %, Tier 2: 1.5 %.
@@ -39,18 +40,42 @@ pub enum CreatorTier {
 }
 
 /// Classification of a Stellar asset accepted by the purchase manager.
-///
-/// Must be kept in sync with `AssetKind` in the material-registry contract.
-///
-/// - `Native`      – XLM (Stellar native asset via its SAC).
-/// - `Token`       – SAC-wrapped token (e.g. USDC, EURC).
-/// - `CreatorToken`– Creator-specific SAC token.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AssetKind {
     Native = 0,
     Token = 1,
     CreatorToken = 2,
+}
+
+/// Settlement state machine for a purchase.
+///
+/// Each purchase reaches exactly one terminal settlement state.
+/// - `Pending`:   After purchase, escrow locked, entitlement active.
+/// - `Released`:  Escrow released to creator (terminal). Entitlement stays active.
+/// - `Disputed`:  Buyer opened a dispute before lock period expired.
+/// - `Refunded`:  Buyer refunded, entitlement revoked (terminal).
+/// - `Expired`:   Timeout reached without action (terminal).
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SettlementState {
+    Pending = 0,
+    Released = 1,
+    Disputed = 2,
+    Refunded = 3,
+    Expired = 4,
+}
+
+/// Resolution applied by admin when closing a dispute.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DisputeResolution {
+    /// Not yet resolved (default/unresolved state).
+    Unresolved = 0,
+    /// Refund the buyer and revoke entitlement.
+    RefundBuyer = 1,
+    /// Release funds to the creator, keep entitlement active.
+    ReleaseToCreator = 2,
 }
 
 /// Allowlist record stored for each approved payment asset.
@@ -98,8 +123,6 @@ pub struct PlatformConfig {
     pub platform_fee_bps: u32,
     pub paused: bool,
     /// Optional price-oracle address for future cross-asset conversion support.
-    /// When `None`, no oracle is configured and all prices must be quoted in
-    /// the exact accepted asset (no conversion).
     pub oracle: Option<Address>,
 }
 
@@ -131,6 +154,30 @@ pub struct EscrowRecord {
     pub claimed: bool,
 }
 
+/// Settlement record tracking the lifecycle state of a purchase.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SettlementRecord {
+    pub purchase_id: u64,
+    pub state: SettlementState,
+    pub disputed_ledger: Option<u32>,
+    pub resolved_ledger: Option<u32>,
+    pub refunded_amount: i128,
+}
+
+/// Dispute record with details about an opened dispute.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeRecord {
+    pub purchase_id: u64,
+    pub opener: Address,
+    pub reason: Bytes,
+    pub opened_ledger: u32,
+    /// Resolution status: `Unresolved` = pending, `RefundBuyer` or `ReleaseToCreator` = resolved.
+    pub resolution: DisputeResolution,
+    pub resolved_ledger: Option<u32>,
+}
+
 /// Data keys for contract storage
 #[contracttype]
 #[derive(Clone)]
@@ -140,6 +187,9 @@ enum DataKey {
     PurchaseNonce,
     Entitlement((BytesN<32>, Address)),
     Escrow(u64),
+    Settlement(u64),
+    Dispute(u64),
+    PurchaseBuyer(u64),
     PendingAdmin,
     CreatorTier(Address),
 }
@@ -176,9 +226,21 @@ pub enum PurchaseError {
 
     // Escrow errors
     EscrowLocked = 50,
+    EscrowAlreadyClaimed = 51,
 
     // Admin transfer errors
     NoPendingAdminTransfer = 60,
+
+    // Settlement / Dispute errors
+    SettlementNotPending = 70,
+    DisputeWindowExpired = 71,
+    DisputeAlreadyExists = 72,
+    NoActiveDispute = 73,
+    DisputeNotResolved = 74,
+    InvalidDisputeReason = 75,
+    PurchaseAlreadySettled = 76,
+    RefundNotAllowed = 77,
+    InsufficientEscrowBalance = 78,
 }
 
 /// Event: purchase.completed
@@ -259,6 +321,47 @@ pub struct EscrowReleasedEvent {
     pub amount: i128,
 }
 
+/// Event: dispute.opened
+#[contractevent(topics = ["dispute", "opened"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeOpenedEvent {
+    #[topic]
+    pub purchase_id: u64,
+    #[topic]
+    pub material_id: BytesN<32>,
+    #[topic]
+    pub opener: Address,
+    pub reason: Bytes,
+    pub opened_ledger: u32,
+}
+
+/// Event: dispute.resolved
+#[contractevent(topics = ["dispute", "resolved"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeResolvedEvent {
+    #[topic]
+    pub purchase_id: u64,
+    #[topic]
+    pub material_id: BytesN<32>,
+    pub resolution: DisputeResolution,
+    pub resolved_ledger: u32,
+}
+
+/// Event: purchase.refunded
+#[contractevent(topics = ["purchase", "refunded"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PurchaseRefundedEvent {
+    #[topic]
+    pub purchase_id: u64,
+    #[topic]
+    pub material_id: BytesN<32>,
+    #[topic]
+    pub buyer: Address,
+    pub asset: Address,
+    pub refund_amount: i128,
+    pub entitlement_revoked: bool,
+}
+
 /// Event: admin.transfer_initiated
 #[contractevent(topics = ["admin", "transfer_initiated"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -293,10 +396,6 @@ pub struct PurchaseManager;
 
 /// Wrapper around a Stellar Asset Contract (SAC) address that exposes the
 /// SEP-41 token interface methods needed by the purchase flow.
-///
-/// Both XLM (via its native SAC) and any other SAC-wrapped token (USDC, EURC,
-/// creator tokens, …) implement this interface, so the purchase logic is
-/// asset-agnostic.
 pub struct SacToken<'a> {
     env: &'a Env,
     address: &'a Address,
@@ -308,7 +407,6 @@ impl<'a> SacToken<'a> {
     }
 
     /// Transfer `amount` tokens from `from` to `to`.
-    /// Equivalent to calling `transfer(from, to, amount)` on the SAC.
     pub fn transfer(&self, from: &Address, to: &Address, amount: i128) {
         let func = Symbol::new(self.env, "transfer");
         let args = Vec::from_array(
@@ -323,7 +421,6 @@ impl<'a> SacToken<'a> {
     }
 
     /// Query the token balance of `id`.
-    /// Equivalent to calling `balance(id)` on the SAC.
     pub fn balance(&self, id: &Address) -> i128 {
         let func = Symbol::new(self.env, "balance");
         let args = Vec::from_array(self.env, [id.into_val(self.env)]);
@@ -334,10 +431,6 @@ impl<'a> SacToken<'a> {
 // ============== Price Oracle Stub ==============
 
 /// Stub for a future price-oracle integration (e.g. Reflector Oracle / SEP-40).
-///
-/// Returns `None` for every query until a concrete oracle is integrated.
-/// The `oracle` field in `PlatformConfig` holds the oracle contract address
-/// once deployed.
 pub struct PriceOracle<'a> {
     env: &'a Env,
     address: &'a Address,
@@ -348,11 +441,6 @@ impl<'a> PriceOracle<'a> {
         PriceOracle { env, address }
     }
 
-    /// Returns the last price of `base` denominated in `quote` as
-    /// `Some((price, decimals))`, or `None` when the oracle is unavailable.
-    ///
-    /// TODO: implement Reflector Oracle or equivalent SEP-40 feed when an
-    ///       on-chain price source is available on the target network.
     pub fn last_price(&self, _base: &Address, _quote: &Address) -> Option<(i128, u32)> {
         let _ = (self.env, self.address);
         None
@@ -390,7 +478,6 @@ impl MaterialRegistryInterface for Address {
 #[contractimpl]
 impl PurchaseManager {
     /// Initialize the PurchaseManager contract with platform configuration
-    /// Must be called once by the admin before any purchases can be made
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -400,17 +487,14 @@ impl PurchaseManager {
     ) -> Result<(), PurchaseError> {
         admin.require_auth();
 
-        // Check if already initialized
         if env.storage().persistent().has(&DataKey::PlatformConfig) {
             return Err(PurchaseError::AlreadyInitialized);
         }
 
-        // Validate platform fee
         if platform_fee_bps > MAX_PLATFORM_FEE_BPS {
             return Err(PurchaseError::InvalidPlatformFee);
         }
 
-        // Validate treasury address
         if treasury == env.current_contract_address() {
             return Err(PurchaseError::InvalidTreasury);
         }
@@ -431,7 +515,6 @@ impl PurchaseManager {
             .persistent()
             .set(&DataKey::PurchaseNonce, &0u64);
 
-        // Emit config event
         PlatformConfigUpdatedEvent {
             treasury,
             platform_fee_bps,
@@ -443,10 +526,6 @@ impl PurchaseManager {
     }
 
     /// Execute a purchase for a material
-    /// - Validates material is active and asset is accepted
-    /// - Collects payment from buyer
-    /// - Locks creator payout funds in escrow for cooling-off period
-    /// - Records entitlement for buyer
     pub fn purchase(
         env: Env,
         buyer: Address,
@@ -533,8 +612,6 @@ impl PurchaseManager {
             total_amount: gross,
             platform_fee,
             seller_net,
-            &transaction_id,
-        )?;
             payout_shares: material.payout_shares.clone(),
             purchase_ledger: current_ledger,
             claimed: false,
@@ -561,6 +638,21 @@ impl PurchaseManager {
         };
 
         set_entitlement(&env, &entitlement);
+
+        // Store purchase → buyer mapping for admin refunds
+        env.storage()
+            .persistent()
+            .set(&DataKey::PurchaseBuyer(purchase_id), &buyer);
+
+        // Initialize settlement record in Pending state
+        let settlement = SettlementRecord {
+            purchase_id,
+            state: SettlementState::Pending,
+            disputed_ledger: None,
+            resolved_ledger: None,
+            refunded_amount: 0,
+        };
+        set_settlement_record(&env, purchase_id, &settlement);
 
         PurchaseCompletedEvent {
             purchase_id,
@@ -605,6 +697,7 @@ impl PurchaseManager {
 
     /// Withdraw escrowed creator payout funds after the lock period expires.
     /// Only callable by a payout recipient (e.g., the creator).
+    /// Transitions settlement from Pending → Released.
     pub fn withdraw_payouts(
         env: Env,
         caller: Address,
@@ -616,7 +709,14 @@ impl PurchaseManager {
             get_escrow_record_internal(&env, purchase_id).ok_or(PurchaseError::MaterialNotFound)?;
 
         if escrow.claimed {
-            return Err(PurchaseError::EntitlementAlreadyExists);
+            return Err(PurchaseError::EscrowAlreadyClaimed);
+        }
+
+        // Verify settlement is in Pending state (not disputed, refunded, or already released)
+        let mut settlement = get_settlement_record_internal(&env, purchase_id)
+            .ok_or(PurchaseError::SettlementNotPending)?;
+        if settlement.state != SettlementState::Pending {
+            return Err(PurchaseError::SettlementNotPending);
         }
 
         let current_ledger = env.ledger().sequence();
@@ -653,6 +753,11 @@ impl PurchaseManager {
         escrow.claimed = true;
         set_escrow_record(&env, purchase_id, &escrow);
 
+        // Transition settlement to Released
+        settlement.state = SettlementState::Released;
+        settlement.resolved_ledger = Some(current_ledger);
+        set_settlement_record(&env, purchase_id, &settlement);
+
         EscrowReleasedEvent {
             purchase_id,
             material_id: escrow.material_id,
@@ -675,20 +780,482 @@ impl PurchaseManager {
             if escrow.claimed {
                 return false;
             }
+            // Also check settlement state — must be Pending
+            if let Some(settlement) = get_settlement_record_internal(&env, purchase_id) {
+                if settlement.state != SettlementState::Pending {
+                    return false;
+                }
+            }
             let current_ledger = env.ledger().sequence();
             return current_ledger >= escrow.purchase_ledger + ESCROW_LOCK_PERIOD_LEDGERS;
         }
         false
     }
 
+    // ============== Dispute Functions ==============
+
+    /// Open a dispute on a purchase.
+    ///
+    /// Only the buyer who made the purchase can open a dispute.
+    /// The dispute must be opened within the dispute window (before lock period expires).
+    /// Transitions settlement from Pending → Disputed.
+    pub fn open_dispute(
+        env: Env,
+        buyer: Address,
+        purchase_id: u64,
+        reason: Bytes,
+    ) -> Result<(), PurchaseError> {
+        buyer.require_auth();
+
+        // Validate reason is not empty
+        if reason.len() == 0 {
+            return Err(PurchaseError::InvalidDisputeReason);
+        }
+
+        let escrow =
+            get_escrow_record_internal(&env, purchase_id).ok_or(PurchaseError::MaterialNotFound)?;
+
+        // Verify the caller is the buyer who made the purchase
+        let entitlement_key = DataKey::Entitlement((escrow.material_id.clone(), buyer.clone()));
+        let entitlement: EntitlementRecord = env
+            .storage()
+            .persistent()
+            .get(&entitlement_key)
+            .ok_or(PurchaseError::NotAuthorized)?;
+
+        if !entitlement.active {
+            return Err(PurchaseError::NotAuthorized);
+        }
+
+        // Check no dispute already exists for this purchase (must be first)
+        if env.storage().persistent().has(&DataKey::Dispute(purchase_id)) {
+            return Err(PurchaseError::DisputeAlreadyExists);
+        }
+
+        // Verify settlement is in Pending state
+        let mut settlement = get_settlement_record_internal(&env, purchase_id)
+            .ok_or(PurchaseError::SettlementNotPending)?;
+        if settlement.state != SettlementState::Pending {
+            return Err(PurchaseError::SettlementNotPending);
+        }
+
+        // Dispute must be opened within the dispute window
+        let current_ledger = env.ledger().sequence();
+        if current_ledger >= escrow.purchase_ledger + DISPUTE_WINDOW_LEDGERS {
+            return Err(PurchaseError::DisputeWindowExpired);
+        }
+
+        // Create dispute record
+        let dispute = DisputeRecord {
+            purchase_id,
+            opener: buyer.clone(),
+            reason: reason.clone(),
+            opened_ledger: current_ledger,
+            resolution: DisputeResolution::Unresolved,
+            resolved_ledger: None,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Dispute(purchase_id), &dispute);
+
+        // Transition settlement to Disputed
+        settlement.state = SettlementState::Disputed;
+        settlement.disputed_ledger = Some(current_ledger);
+        set_settlement_record(&env, purchase_id, &settlement);
+
+        DisputeOpenedEvent {
+            purchase_id,
+            material_id: escrow.material_id.clone(),
+            opener: buyer,
+            reason,
+            opened_ledger: current_ledger,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Resolve an active dispute (admin only).
+    ///
+    /// - `RefundBuyer`: Refunds the buyer from escrow, revokes entitlement.
+    /// - `ReleaseToCreator`: Releases funds to creator, keeps entitlement active.
+    /// Transitions settlement from Disputed → Refunded or Disputed → Released.
+    pub fn resolve_dispute(
+        env: Env,
+        admin: Address,
+        purchase_id: u64,
+        resolution: DisputeResolution,
+    ) -> Result<(), PurchaseError> {
+        auth::require_admin(&env, &admin)?;
+
+        let dispute: DisputeRecord = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Dispute(purchase_id))
+            .ok_or(PurchaseError::NoActiveDispute)?;
+
+        // Dispute must not already be resolved
+        if dispute.resolution != DisputeResolution::Unresolved {
+            return Err(PurchaseError::DisputeNotResolved);
+        }
+
+        let mut settlement = get_settlement_record_internal(&env, purchase_id)
+            .ok_or(PurchaseError::SettlementNotPending)?;
+        if settlement.state != SettlementState::Disputed {
+            return Err(PurchaseError::SettlementNotPending);
+        }
+
+        let mut escrow =
+            get_escrow_record_internal(&env, purchase_id).ok_or(PurchaseError::MaterialNotFound)?;
+
+        let current_ledger = env.ledger().sequence();
+
+        match resolution {
+            DisputeResolution::RefundBuyer => {
+                // Refund the buyer from the contract's escrowed funds
+                if escrow.seller_net > 0 {
+                    let contract_address = env.current_contract_address();
+                    let buyer = dispute.opener.clone();
+
+                    // Check contract has sufficient balance
+                    let balance = SacToken::new(&env, &escrow.asset).balance(&contract_address);
+                    if balance < escrow.seller_net {
+                        return Err(PurchaseError::InsufficientEscrowBalance);
+                    }
+
+                    transfer_asset(
+                        &env,
+                        &contract_address,
+                        &buyer,
+                        &escrow.asset,
+                        escrow.seller_net,
+                    )?;
+                }
+
+                // Mark escrow as claimed (funds returned)
+                escrow.claimed = true;
+                set_escrow_record(&env, purchase_id, &escrow);
+
+                // Revoke entitlement
+                let entitlement_key = DataKey::Entitlement((
+                    escrow.material_id.clone(),
+                    dispute.opener.clone(),
+                ));
+                if let Some(mut entitlement) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, EntitlementRecord>(&entitlement_key)
+                {
+                    entitlement.active = false;
+                    env.storage()
+                        .persistent()
+                        .set(&entitlement_key, &entitlement);
+                }
+
+                // Update settlement to Refunded
+                settlement.state = SettlementState::Refunded;
+                settlement.resolved_ledger = Some(current_ledger);
+                settlement.refunded_amount = escrow.seller_net;
+                set_settlement_record(&env, purchase_id, &settlement);
+
+                // Update dispute record
+                let mut updated_dispute = dispute.clone();
+                updated_dispute.resolution = DisputeResolution::RefundBuyer;
+                updated_dispute.resolved_ledger = Some(current_ledger);
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Dispute(purchase_id), &updated_dispute);
+
+                PurchaseRefundedEvent {
+                    purchase_id,
+                    material_id: escrow.material_id.clone(),
+                    buyer: dispute.opener.clone(),
+                    asset: escrow.asset.clone(),
+                    refund_amount: escrow.seller_net,
+                    entitlement_revoked: true,
+                }
+                .publish(&env);
+            }
+            DisputeResolution::ReleaseToCreator => {
+                // Release funds to creator (same as withdraw_payouts)
+                if escrow.seller_net > 0 {
+                    distribute_payout_shares_from_contract(
+                        &env,
+                        purchase_id,
+                        &escrow.material_id,
+                        &escrow,
+                    )?;
+                }
+
+                escrow.claimed = true;
+                set_escrow_record(&env, purchase_id, &escrow);
+
+                // Update settlement to Released
+                settlement.state = SettlementState::Released;
+                settlement.resolved_ledger = Some(current_ledger);
+                set_settlement_record(&env, purchase_id, &settlement);
+
+                // Update dispute record
+                let mut updated_dispute = dispute.clone();
+                updated_dispute.resolution = DisputeResolution::ReleaseToCreator;
+                updated_dispute.resolved_ledger = Some(current_ledger);
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Dispute(purchase_id), &updated_dispute);
+
+                EscrowReleasedEvent {
+                    purchase_id,
+                    material_id: escrow.material_id.clone(),
+                    asset: escrow.asset.clone(),
+                    amount: escrow.seller_net,
+                }
+                .publish(&env);
+            }
+            DisputeResolution::Unresolved => {
+                // Should never happen because input parameter should not be Unresolved
+                return Err(PurchaseError::DisputeNotResolved);
+            }
+        }
+
+        DisputeResolvedEvent {
+            purchase_id,
+            material_id: escrow.material_id,
+            resolution,
+            resolved_ledger: current_ledger,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Admin-initiated refund for a purchase (without prior dispute).
+    ///
+    /// Only works when settlement is in Pending state.
+    /// Transitions settlement from Pending → Refunded.
+    /// Revokes entitlement and returns funds to buyer.
+    /// Uses the stored PurchaseBuyer mapping to find the buyer.
+    pub fn refund_purchase(
+        env: Env,
+        admin: Address,
+        purchase_id: u64,
+    ) -> Result<(), PurchaseError> {
+        auth::require_admin(&env, &admin)?;
+
+        let mut settlement = get_settlement_record_internal(&env, purchase_id)
+            .ok_or(PurchaseError::SettlementNotPending)?;
+
+        // Only Pending purchases can be refunded (not already released/disputed/refunded)
+        if settlement.state != SettlementState::Pending {
+            return Err(PurchaseError::RefundNotAllowed);
+        }
+
+        let mut escrow =
+            get_escrow_record_internal(&env, purchase_id).ok_or(PurchaseError::MaterialNotFound)?;
+
+        if escrow.claimed {
+            return Err(PurchaseError::EscrowAlreadyClaimed);
+        }
+
+        // Look up the buyer from the PurchaseBuyer mapping
+        let buyer: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PurchaseBuyer(purchase_id))
+            .ok_or(PurchaseError::NotAuthorized)?;
+
+        let current_ledger = env.ledger().sequence();
+
+        // Verify the buyer has an active entitlement
+        let entitlement_key = DataKey::Entitlement((escrow.material_id.clone(), buyer.clone()));
+        let entitlement: EntitlementRecord = env
+            .storage()
+            .persistent()
+            .get(&entitlement_key)
+            .ok_or(PurchaseError::NotAuthorized)?;
+
+        if !entitlement.active {
+            return Err(PurchaseError::NotAuthorized);
+        }
+
+        // Refund the buyer from the contract's escrowed funds
+        if escrow.seller_net > 0 {
+            let contract_address = env.current_contract_address();
+
+            let balance = SacToken::new(&env, &escrow.asset).balance(&contract_address);
+            if balance < escrow.seller_net {
+                return Err(PurchaseError::InsufficientEscrowBalance);
+            }
+
+            transfer_asset(
+                &env,
+                &contract_address,
+                &buyer,
+                &escrow.asset,
+                escrow.seller_net,
+            )?;
+        }
+
+        // Mark escrow as claimed
+        escrow.claimed = true;
+        set_escrow_record(&env, purchase_id, &escrow);
+
+        // Revoke entitlement
+        let mut entitlement = entitlement;
+        entitlement.active = false;
+        env.storage()
+            .persistent()
+            .set(&entitlement_key, &entitlement);
+
+        // Update settlement to Refunded
+        settlement.state = SettlementState::Refunded;
+        settlement.resolved_ledger = Some(current_ledger);
+        settlement.refunded_amount = escrow.seller_net;
+        set_settlement_record(&env, purchase_id, &settlement);
+
+        PurchaseRefundedEvent {
+            purchase_id,
+            material_id: escrow.material_id.clone(),
+            buyer: buyer.clone(),
+            asset: escrow.asset.clone(),
+            refund_amount: escrow.seller_net,
+            entitlement_revoked: true,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Refund a purchase to a specific buyer (admin only).
+    ///
+    /// This variant includes the buyer address explicitly for admin-initiated refunds.
+    /// Transitions settlement from Pending → Refunded.
+    pub fn refund_purchase_to_buyer(
+        env: Env,
+        admin: Address,
+        purchase_id: u64,
+        buyer: Address,
+    ) -> Result<(), PurchaseError> {
+        auth::require_admin(&env, &admin)?;
+
+        let mut settlement = get_settlement_record_internal(&env, purchase_id)
+            .ok_or(PurchaseError::SettlementNotPending)?;
+
+        if settlement.state != SettlementState::Pending {
+            return Err(PurchaseError::RefundNotAllowed);
+        }
+
+        let mut escrow =
+            get_escrow_record_internal(&env, purchase_id).ok_or(PurchaseError::MaterialNotFound)?;
+
+        if escrow.claimed {
+            return Err(PurchaseError::EscrowAlreadyClaimed);
+        }
+
+        let current_ledger = env.ledger().sequence();
+
+        // Verify the buyer has an active entitlement
+        let entitlement_key = DataKey::Entitlement((escrow.material_id.clone(), buyer.clone()));
+        let entitlement: EntitlementRecord = env
+            .storage()
+            .persistent()
+            .get(&entitlement_key)
+            .ok_or(PurchaseError::NotAuthorized)?;
+
+        if !entitlement.active {
+            return Err(PurchaseError::NotAuthorized);
+        }
+
+        // Refund the buyer from the contract's escrowed funds
+        if escrow.seller_net > 0 {
+            let contract_address = env.current_contract_address();
+
+            let balance = SacToken::new(&env, &escrow.asset).balance(&contract_address);
+            if balance < escrow.seller_net {
+                return Err(PurchaseError::InsufficientEscrowBalance);
+            }
+
+            transfer_asset(
+                &env,
+                &contract_address,
+                &buyer,
+                &escrow.asset,
+                escrow.seller_net,
+            )?;
+        }
+
+        // Mark escrow as claimed
+        escrow.claimed = true;
+        set_escrow_record(&env, purchase_id, &escrow);
+
+        // Revoke entitlement
+        let mut entitlement = entitlement;
+        entitlement.active = false;
+        env.storage()
+            .persistent()
+            .set(&entitlement_key, &entitlement);
+
+        // Update settlement to Refunded
+        settlement.state = SettlementState::Refunded;
+        settlement.resolved_ledger = Some(current_ledger);
+        settlement.refunded_amount = escrow.seller_net;
+        set_settlement_record(&env, purchase_id, &settlement);
+
+        PurchaseRefundedEvent {
+            purchase_id,
+            material_id: escrow.material_id.clone(),
+            buyer: buyer.clone(),
+            asset: escrow.asset.clone(),
+            refund_amount: escrow.seller_net,
+            entitlement_revoked: true,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    // ============== Settlement Query Functions ==============
+
+    /// Get the settlement record for a purchase
+    pub fn get_settlement(env: Env, purchase_id: u64) -> Option<SettlementRecord> {
+        get_settlement_record_internal(&env, purchase_id)
+    }
+
+    /// Get the dispute record for a purchase
+    pub fn get_dispute(env: Env, purchase_id: u64) -> Option<DisputeRecord> {
+        env.storage().persistent().get(&DataKey::Dispute(purchase_id))
+    }
+
+    /// Get the current settlement state for a purchase
+    pub fn get_settlement_state(env: Env, purchase_id: u64) -> Option<SettlementState> {
+        get_settlement_record_internal(&env, purchase_id).map(|s| s.state)
+    }
+
+    /// Check if a purchase has been settled (reached a terminal state)
+    pub fn is_settled(env: Env, purchase_id: u64) -> bool {
+        if let Some(settlement) = get_settlement_record_internal(&env, purchase_id) {
+            matches!(
+                settlement.state,
+                SettlementState::Released
+                    | SettlementState::Refunded
+                    | SettlementState::Expired
+            )
+        } else {
+            false
+        }
+    }
+
+    /// Check if a purchase has been refunded
+    pub fn is_refunded(env: Env, purchase_id: u64) -> bool {
+        if let Some(settlement) = get_settlement_record_internal(&env, purchase_id) {
+            settlement.state == SettlementState::Refunded
+        } else {
+            false
+        }
+    }
+
     // ============== Admin Functions ==============
 
     /// Set whether an asset is allowed for purchases (admin only).
-    ///
-    /// `kind` classifies the asset: `Native` for XLM, `Token` for SAC-wrapped
-    /// fungible tokens such as USDC, and `CreatorToken` for creator-specific
-    /// tokens. The classification is stored for informational purposes and
-    /// future filtering.
     pub fn set_asset_allowed(
         env: Env,
         admin: Address,
@@ -703,7 +1270,6 @@ impl PurchaseManager {
             .persistent()
             .set(&DataKey::AllowedAsset(asset.clone()), &info);
 
-        // Emit policy update event
         AssetPolicyUpdatedEvent {
             asset,
             kind,
@@ -724,12 +1290,10 @@ impl PurchaseManager {
     ) -> Result<(), PurchaseError> {
         auth::require_admin(&env, &admin)?;
 
-        // Validate platform fee
         if platform_fee_bps > MAX_PLATFORM_FEE_BPS {
             return Err(PurchaseError::InvalidPlatformFee);
         }
 
-        // Validate treasury
         if treasury == env.current_contract_address() {
             return Err(PurchaseError::InvalidTreasury);
         }
@@ -741,7 +1305,6 @@ impl PurchaseManager {
             treasury: treasury.clone(),
             platform_fee_bps,
             paused,
-            // Preserve the existing oracle; use set_oracle() to change it.
             oracle: current_config.oracle,
         };
 
@@ -749,7 +1312,6 @@ impl PurchaseManager {
             .persistent()
             .set(&DataKey::PlatformConfig, &new_config);
 
-        // Emit config update event
         PlatformConfigUpdatedEvent {
             treasury,
             platform_fee_bps,
@@ -767,8 +1329,7 @@ impl PurchaseManager {
             .get(&DataKey::AllowedAsset(asset))
     }
 
-    /// Configure the price-oracle address used for future cross-asset
-    /// conversion (admin only). Pass `None` to clear the oracle.
+    /// Configure the price-oracle address (admin only).
     pub fn set_oracle(
         env: Env,
         admin: Address,
@@ -800,10 +1361,6 @@ impl PurchaseManager {
     }
 
     /// Update the platform fee rate (admin only).
-    ///
-    /// Updates the platform fee to a new rate, validated against the maximum
-    /// ceiling of 10% (1 000 basis points). The change is applied instantly
-    /// to all subsequent purchases.
     pub fn update_platform_fee(
         env: Env,
         admin: Address,
@@ -834,7 +1391,6 @@ impl PurchaseManager {
     }
 
     /// Pause contract operations (admin only)
-    /// When paused, all state-modifying functions will fail
     pub fn pause(env: Env, admin: Address) -> Result<(), PurchaseError> {
         auth::require_admin(&env, &admin)?;
 
@@ -845,7 +1401,6 @@ impl PurchaseManager {
             .persistent()
             .set(&DataKey::PlatformConfig, &config);
 
-        // Emit config update event
         PlatformConfigUpdatedEvent {
             treasury: config.treasury,
             platform_fee_bps: config.platform_fee_bps,
@@ -857,7 +1412,6 @@ impl PurchaseManager {
     }
 
     /// Unpause contract operations (admin only)
-    /// When unpaused, normal operations resume
     pub fn unpause(env: Env, admin: Address) -> Result<(), PurchaseError> {
         auth::require_admin(&env, &admin)?;
 
@@ -868,7 +1422,6 @@ impl PurchaseManager {
             .persistent()
             .set(&DataKey::PlatformConfig, &config);
 
-        // Emit config update event
         PlatformConfigUpdatedEvent {
             treasury: config.treasury,
             platform_fee_bps: config.platform_fee_bps,
@@ -890,12 +1443,9 @@ impl PurchaseManager {
         Ok(())
     }
 
-    // ============== Admin Transfer (two-step, #378) ==============
+    // ============== Admin Transfer (two-step) ==============
 
     /// Begin an admin ownership transfer.
-    ///
-    /// Stores `new_admin` as the pending admin and emits an event.  The
-    /// transfer is NOT complete until `new_admin` calls `accept_admin`.
     pub fn transfer_admin(
         env: Env,
         admin: Address,
@@ -918,9 +1468,6 @@ impl PurchaseManager {
     }
 
     /// Complete an admin ownership transfer initiated by `transfer_admin`.
-    ///
-    /// Only the address stored as `PendingAdmin` may call this.  On success
-    /// the caller becomes the sole admin and the pending slot is cleared.
     pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), PurchaseError> {
         new_admin.require_auth();
 
@@ -934,9 +1481,7 @@ impl PurchaseManager {
             return Err(PurchaseError::NotAuthorized);
         }
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Admin, &new_admin);
+        auth::set_admin_role(&env, &new_admin);
         env.storage()
             .persistent()
             .remove(&DataKey::PendingAdmin);
@@ -954,13 +1499,16 @@ impl PurchaseManager {
         env.storage().persistent().get(&DataKey::PendingAdmin)
     }
 
-    // ============== Creator Volume Tiers (#381) ==============
+    /// Return the buyer address for a purchase, if known.
+    pub fn get_purchase_buyer(env: Env, purchase_id: u64) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PurchaseBuyer(purchase_id))
+    }
+
+    // ============== Creator Volume Tiers ==============
 
     /// Assign a volume tier to a creator (admin only).
-    ///
-    /// The tier controls the platform fee rate applied when the creator's
-    /// materials are purchased.  Use `CreatorTier::Default` to revert a
-    /// creator back to the global `platform_fee_bps`.
     pub fn set_creator_tier(
         env: Env,
         admin: Address,
@@ -984,7 +1532,6 @@ impl PurchaseManager {
     }
 
     /// Return the volume tier assigned to a creator.
-    /// Returns `CreatorTier::Default` when no tier has been set.
     pub fn get_creator_tier(env: Env, creator: Address) -> CreatorTier {
         env.storage()
             .persistent()
@@ -996,10 +1543,6 @@ impl PurchaseManager {
 // ============== Internal Functions ==============
 
 /// Return the effective platform fee rate for `creator`.
-///
-/// Tier-discounted rates take precedence over the global config fee.
-/// Integer truncation in the caller ensures the creator is never charged more
-/// than the stated rate.
 fn get_effective_fee_bps(env: &Env, creator: &Address, config_fee_bps: u32) -> u32 {
     match env
         .storage()
@@ -1019,7 +1562,6 @@ fn get_platform_config(env: &Env) -> Result<PlatformConfig, PurchaseError> {
         .get(&DataKey::PlatformConfig)
         .ok_or(PurchaseError::NotAuthorized)
 }
-
 
 fn is_asset_allowed(env: &Env, asset: &Address) -> bool {
     env.storage()
@@ -1060,8 +1602,6 @@ fn transfer_asset(
     asset: &Address,
     amount: i128,
 ) -> Result<(), PurchaseError> {
-    // Delegate to the Stellar Asset Contract (SAC) via the SEP-41 interface.
-    // Works for XLM (native SAC), USDC, and any other SAC-wrapped token.
     SacToken::new(env, asset).transfer(from, to, amount);
     Ok(())
 }
@@ -1112,10 +1652,6 @@ fn get_entitlement_internal(
     env: &Env,
     material_id: &BytesN<32>,
     buyer: &Address,
-    payout_shares: &Vec<PayoutShare>,
-    asset: &Address,
-    seller_net: i128,
-    transaction_id: &Bytes,
 ) -> Option<EntitlementRecord> {
     env.storage()
         .persistent()
@@ -1139,6 +1675,18 @@ fn set_escrow_record(env: &Env, purchase_id: u64, record: &EscrowRecord) {
     env.storage()
         .persistent()
         .set(&DataKey::Escrow(purchase_id), record);
+}
+
+fn get_settlement_record_internal(env: &Env, purchase_id: u64) -> Option<SettlementRecord> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::Settlement(purchase_id))
+}
+
+fn set_settlement_record(env: &Env, purchase_id: u64, record: &SettlementRecord) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::Settlement(purchase_id), record);
 }
 
 fn distribute_payout_shares_from_contract(
@@ -1178,7 +1726,7 @@ fn distribute_payout_shares_from_contract(
                 role: Symbol::new(env, "creator_share"),
                 asset: escrow.asset.clone(),
                 amount: share_amount,
-                transaction_id: transaction_id.clone(),
+                transaction_id: Bytes::new(env),
             }
             .publish(env);
         }
@@ -1190,6 +1738,15 @@ fn distribute_payout_shares_from_contract(
         return Err(PurchaseError::InvalidPayoutShares);
     }
 
+    Ok(())
+}
+
+/// Verify that `caller` is the current admin (used by functions that call
+/// `require_auth` before this check).
+fn verify_admin(env: &Env, caller: &Address) -> Result<(), PurchaseError> {
+    if !auth::has_admin_role(env, caller) {
+        return Err(PurchaseError::NotAuthorized);
+    }
     Ok(())
 }
 
