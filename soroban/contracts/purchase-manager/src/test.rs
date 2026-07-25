@@ -3,6 +3,7 @@
 extern crate std;
 
 use super::*;
+use soroban_sdk::testutils::storage::{Instance as _, Persistent as _};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
 use soroban_sdk::{contract, contractimpl, contracttype};
 use soroban_sdk::{vec, Event, Symbol};
@@ -1361,6 +1362,55 @@ fn returns_false_for_non_existent_users() {
 
 #[test]
 fn purchase_fails_for_invalid_items() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let material_id = bytes32(&env, 2);
+    let material = MaterialRecord {
+        material_id: material_id.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&material_id, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+
+    let invalid_material_id = bytes32(&env, 100);
+
+    let result = client.try_purchase(
+        &buyer,
+        &invalid_material_id,
+        &asset,
+        &1_000_000,
+        &sample_transaction_id(&env),
+    );
+    assert_eq!(result, Err(Ok(PurchaseError::MaterialNotFound)));
+}
+
 // ============== Escrow Tests ==============
 
 #[test]
@@ -1402,7 +1452,7 @@ fn escrow_record_queryable_after_purchase() {
     let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
 
-    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000);
+    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
     let escrow = client.get_escrow_record(&purchase_id).unwrap();
 
     assert_eq!(escrow.purchase_id, purchase_id);
@@ -1424,11 +1474,10 @@ fn withdraw_payouts_fails_before_lock_period() {
     let registry = env.register(MockRegistry, ());
     let treasury = Address::generate(&env);
     let buyer = Address::generate(&env);
-    let asset = Address::generate(&env);
     let creator = Address::generate(&env);
     let asset = env.register(MockAsset, ());
 
-    let material_id = bytes32(&env, 2);
+    let material_id = bytes32(&env, 3);
     let material = MaterialRecord {
         material_id: material_id.clone(),
         creator: creator.clone(),
@@ -1455,26 +1504,14 @@ fn withdraw_payouts_fails_before_lock_period() {
     let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
 
-    let invalid_material_id = bytes32(&env, 100);
+    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
 
-    let result = client.try_purchase(&buyer, &invalid_material_id, &asset, &1_000_000);
-    assert_eq!(result, Err(Ok(PurchaseError::MaterialNotFound)));
-}
-
-#[test]
-fn rejects_unauthorized_platform_config_change() {
-    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000);
-
-    let all_events = env.events().all().filter_by_contract(&contract_id);
-    let events = all_events.events();
-    // First event is PlatformConfigUpdated from init, second is AdminTransferInitiated
-    assert_eq!(events.len(), 2);
     let result = client.try_withdraw_payouts(&creator, &purchase_id);
     assert_eq!(result, Err(Ok(PurchaseError::EscrowLocked)));
 }
 
 #[test]
-fn withdraw_payouts_succeeds_after_lock_period() {
+fn rejects_unauthorized_platform_config_change() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -1485,14 +1522,17 @@ fn withdraw_payouts_succeeds_after_lock_period() {
 
     let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
 
-    let all_events = env.events().all().filter_by_contract(&contract_id);
-    let events = all_events.events();
-    // init + transfer_initiated + transfer_accepted
-    assert_eq!(events.len(), 3);
     let new_treasury = Address::generate(&env);
     let result = client.try_set_platform_config(&unauthorized_user, &new_treasury, &600, &false);
     assert_eq!(result, Err(Ok(PurchaseError::NotAuthorized)));
 }
+
+#[test]
+fn withdraw_payouts_succeeds_after_lock_period() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
     let registry = env.register(MockRegistry, ());
     let treasury = Address::generate(&env);
     let buyer = Address::generate(&env);
@@ -1529,8 +1569,7 @@ fn withdraw_payouts_succeeds_after_lock_period() {
 
     assert_eq!(client.get_creator_tier(&creator), CreatorTier::Default);
 
-    client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
-    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000);
+    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
 
     env.ledger().set_sequence_number(36_000);
 
@@ -1597,10 +1636,7 @@ fn withdraw_payouts_fails_for_non_recipient() {
     let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
 
-    assert_eq!(client.get_creator_tier(&creator), CreatorTier::Tier1);
-
-    client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
-    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000);
+    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
 
     env.ledger().set_sequence_number(36_000);
 
@@ -1647,15 +1683,155 @@ fn withdraw_payouts_fails_when_already_claimed() {
 
     let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
-    client.set_creator_tier(&admin, &creator, &CreatorTier::Tier2);
 
-    assert_eq!(client.get_creator_tier(&creator), CreatorTier::Tier2);
+    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
 
-    client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
+    env.ledger().set_sequence_number(36_000);
 
-    // Tier2 fee: 150 bps of 1_000_000 = 15_000
-    assert_eq!(asset_client.transfer_at(&0).amount, 15_000);
+    client.withdraw_payouts(&creator, &purchase_id);
+
+    let result = client.try_withdraw_payouts(&creator, &purchase_id);
+    assert_eq!(result, Err(Ok(PurchaseError::EntitlementAlreadyExists)));
 }
+
+// ============== Admin Transfer Tests (#378) ==============
+
+#[test]
+fn transfer_admin_initiates_pending_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    client.transfer_admin(&admin, &new_admin);
+
+    assert_eq!(client.get_pending_admin(), Some(new_admin));
+}
+
+#[test]
+fn transfer_admin_emits_initiated_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    client.transfer_admin(&admin, &new_admin);
+
+    let all_events = env.events().all().filter_by_contract(&contract_id);
+    let events = all_events.events();
+    // env.events().all() only reflects the most recent top-level invocation,
+    // so only transfer_admin's AdminTransferInitiated event is visible here.
+    assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn transfer_admin_requires_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    let result = client.try_transfer_admin(&non_admin, &new_admin);
+    assert_eq!(result, Err(Ok(PurchaseError::NotAuthorized)));
+}
+
+#[test]
+fn accept_admin_completes_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    client.transfer_admin(&admin, &new_admin);
+    client.accept_admin(&new_admin);
+
+    assert_eq!(client.get_pending_admin(), None);
+
+    // The new admin can now perform admin-only actions.
+    client.update_platform_fee(&new_admin, &300);
+    let config = client.get_platform_config().unwrap();
+    assert_eq!(config.platform_fee_bps, 300);
+}
+
+#[test]
+fn accept_admin_emits_accepted_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    client.transfer_admin(&admin, &new_admin);
+    client.accept_admin(&new_admin);
+
+    let all_events = env.events().all().filter_by_contract(&contract_id);
+    let events = all_events.events();
+    // env.events().all() only reflects the most recent top-level invocation,
+    // so only accept_admin's AdminTransferAccepted event is visible here.
+    assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn accept_admin_fails_when_no_pending_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let claimant = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    let result = client.try_accept_admin(&claimant);
+    assert_eq!(result, Err(Ok(PurchaseError::NoPendingAdminTransfer)));
+}
+
+#[test]
+fn accept_admin_fails_for_non_pending_address() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    client.transfer_admin(&admin, &new_admin);
+
+    let result = client.try_accept_admin(&impostor);
+    assert_eq!(result, Err(Ok(PurchaseError::NotAuthorized)));
+}
+
+// ============== Creator Volume Tier Tests (#381) ==============
 
 #[test]
 fn set_creator_tier_requires_admin() {
@@ -1670,14 +1846,188 @@ fn set_creator_tier_requires_admin() {
 
     let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
 
-    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000);
+    let result = client.try_set_creator_tier(&non_admin, &creator, &CreatorTier::Tier1);
+    assert_eq!(result, Err(Ok(PurchaseError::NotAuthorized)));
+}
 
-    env.ledger().set_sequence_number(36_000);
+#[test]
+fn creator_tier_defaults_to_default_when_not_set() {
+    let env = Env::default();
+    env.mock_all_auths();
 
-    client.withdraw_payouts(&creator, &purchase_id);
+    let admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
 
-    let result = client.try_withdraw_payouts(&creator, &purchase_id);
-    assert_eq!(result, Err(Ok(PurchaseError::EntitlementAlreadyExists)));
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    assert_eq!(client.get_creator_tier(&creator), CreatorTier::Default);
+}
+
+#[test]
+fn creator_tier_can_be_reverted_to_default() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    client.set_creator_tier(&admin, &creator, &CreatorTier::Tier1);
+    assert_eq!(client.get_creator_tier(&creator), CreatorTier::Tier1);
+
+    client.set_creator_tier(&admin, &creator, &CreatorTier::Default);
+    assert_eq!(client.get_creator_tier(&creator), CreatorTier::Default);
+}
+
+#[test]
+fn default_creator_uses_platform_fee_bps() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+    let asset_client = MockAssetClient::new(&env, &asset);
+
+    let material_id = bytes32(&env, 8);
+    let material = MaterialRecord {
+        material_id: material_id.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&material_id, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 700);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+
+    assert_eq!(client.get_creator_tier(&creator), CreatorTier::Default);
+
+    client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
+
+    // Default tier: uses the global platform_fee_bps (700 bps of 1_000_000 = 70_000)
+    assert_eq!(asset_client.transfer_at(&0).amount, 70_000);
+}
+
+#[test]
+fn tier1_creator_uses_250bps_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+    let asset_client = MockAssetClient::new(&env, &asset);
+
+    let material_id = bytes32(&env, 7);
+    let material = MaterialRecord {
+        material_id: material_id.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&material_id, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_creator_tier(&admin, &creator, &CreatorTier::Tier1);
+
+    assert_eq!(client.get_creator_tier(&creator), CreatorTier::Tier1);
+
+    client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
+
+    // Tier1 fee: 250 bps of 1_000_000 = 25_000
+    assert_eq!(asset_client.transfer_at(&0).amount, 25_000);
+}
+
+#[test]
+fn tier2_creator_uses_150bps_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+    let asset_client = MockAssetClient::new(&env, &asset);
+
+    let material_id = bytes32(&env, 6);
+    let material = MaterialRecord {
+        material_id: material_id.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&material_id, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_creator_tier(&admin, &creator, &CreatorTier::Tier2);
+
+    assert_eq!(client.get_creator_tier(&creator), CreatorTier::Tier2);
+
+    client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
+
+    // Tier2 fee: 150 bps of 1_000_000 = 15_000
+    assert_eq!(asset_client.transfer_at(&0).amount, 15_000);
 }
 
 #[test]
@@ -1695,7 +2045,7 @@ fn is_escrow_releasable_returns_false_before_lock_period() {
     let material_id = bytes32(&env, 6);
     let material = MaterialRecord {
         material_id: material_id.clone(),
-        creator,
+        creator: creator.clone(),
         paused: false,
         status: MaterialStatus::Active,
         quotes: vec![
@@ -1720,7 +2070,7 @@ fn is_escrow_releasable_returns_false_before_lock_period() {
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
 
     assert_eq!(client.get_creator_tier(&creator), CreatorTier::Default);
-    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000);
+    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
 
     assert!(!client.is_escrow_releasable(&purchase_id));
 }
@@ -1740,7 +2090,7 @@ fn is_escrow_releasable_returns_true_after_lock_period() {
     let material_id = bytes32(&env, 7);
     let material = MaterialRecord {
         material_id: material_id.clone(),
-        creator,
+        creator: creator.clone(),
         paused: false,
         status: MaterialStatus::Active,
         quotes: vec![
@@ -1764,7 +2114,7 @@ fn is_escrow_releasable_returns_true_after_lock_period() {
     let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
 
-    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000);
+    let purchase_id = client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
 
     client.set_creator_tier(&admin, &creator, &CreatorTier::Tier1);
     assert_eq!(client.get_creator_tier(&creator), CreatorTier::Tier1);
@@ -1774,4 +2124,348 @@ fn is_escrow_releasable_returns_true_after_lock_period() {
     env.ledger().set_sequence_number(36_000);
 
     assert!(client.is_escrow_releasable(&purchase_id));
+}
+
+// ============== TTL Renewal Tests (#464) ==============
+
+/// Small, deterministic TTL window: large enough to clear the network's
+/// minimum persistent-entry TTL, small enough that advancing a few
+/// thousand ledgers is enough to cross the renewal threshold.
+fn set_short_ttl_window(env: &Env) {
+    env.ledger().with_mut(|li| {
+        li.min_persistent_entry_ttl = 100;
+        li.max_entry_ttl = 20_000;
+    });
+}
+
+/// The test host advances the ledger sequence by a small amount between
+/// separate top-level invocations, so a TTL measured a call or two after a
+/// renewal can read a few ledgers below the exact `extend_to` value. Allow
+/// a small tolerance rather than asserting an exact figure.
+fn assert_ttl_renewed_to_max(ttl: u32) {
+    assert!(
+        ttl <= 20_000 && ttl >= 19_990,
+        "expected TTL near the 20_000 max, got {ttl}"
+    );
+}
+
+/// Registers `material_id` in the mock registry with a single quote/payout
+/// pair, so `client.purchase` can succeed against it.
+fn seed_purchasable_material(
+    env: &Env,
+    registry: &Address,
+    material_id: &BytesN<32>,
+    creator: &Address,
+    asset: &Address,
+    amount: i128,
+) {
+    let material = MaterialRecord {
+        material_id: material_id.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![&env, AssetQuote { asset: asset.clone(), amount }],
+        payout_shares: vec![
+            &env,
+            PayoutShare { recipient: creator.clone(), share_bps: 10_000 },
+        ],
+    };
+    MockRegistryClient::new(env, registry).set_material(material_id, &material);
+}
+
+#[test]
+fn platform_config_ttl_renews_on_every_touch_and_never_lapses() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    let initial_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+    assert_ttl_renewed_to_max(initial_ttl);
+
+    // Advance well past the renewal threshold without any call touching
+    // instance state.
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    // A plain read renews the instance TTL straight back to the max.
+    assert!(client.get_platform_config().is_some());
+
+    let renewed_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+    assert_ttl_renewed_to_max(renewed_ttl);
+}
+
+#[test]
+fn entitlement_and_escrow_ttl_renew_on_read_after_partial_lapse() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let material_id = bytes32(&env, 90);
+    seed_purchasable_material(&env, &registry, &material_id, &creator, &asset, 1_000_000);
+
+    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+
+    let purchase_id =
+        client.purchase(&buyer, &material_id, &asset, &1_000_000, &sample_transaction_id(&env));
+
+    let escrow_key = DataKey::Escrow(purchase_id);
+    let entitlement_key = DataKey::Entitlement((material_id.clone(), buyer.clone()));
+
+    let initial_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&escrow_key));
+    assert_ttl_renewed_to_max(initial_ttl);
+
+    // Advance past the renewal threshold without touching either record —
+    // exactly the "buyer never comes back" scenario #464 is about.
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    // A plain content-access check (has_entitlement) and an escrow lookup
+    // are both reads, and both renew — a buyer actively using what they
+    // paid for keeps their own access alive for free.
+    assert!(client.has_entitlement(&material_id, &buyer));
+    assert!(client.get_escrow_record(&purchase_id).is_some());
+
+    let renewed_escrow_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&escrow_key));
+    let renewed_entitlement_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&entitlement_key));
+    assert_ttl_renewed_to_max(renewed_escrow_ttl);
+    assert_ttl_renewed_to_max(renewed_entitlement_ttl);
+}
+
+#[test]
+fn allowed_asset_ttl_renews_on_write() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    let asset = Address::generate(&env);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+
+    let asset_key = DataKey::AllowedAsset(asset.clone());
+    let initial_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_key));
+    assert_ttl_renewed_to_max(initial_ttl);
+
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    let renewed_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_key));
+    assert_ttl_renewed_to_max(renewed_ttl);
+}
+
+#[test]
+fn creator_tier_ttl_renews_on_write() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    let creator = Address::generate(&env);
+    client.set_creator_tier(&admin, &creator, &CreatorTier::Tier1);
+
+    let tier_key = DataKey::CreatorTier(creator.clone());
+    let initial_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&tier_key));
+    assert_ttl_renewed_to_max(initial_ttl);
+
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    client.set_creator_tier(&admin, &creator, &CreatorTier::Tier2);
+    let renewed_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&tier_key));
+    assert_ttl_renewed_to_max(renewed_ttl);
+}
+
+#[test]
+fn admin_role_ttl_renews_on_any_admin_check() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    let admin_key = auth::AuthDataKey::AdminRole(admin.clone());
+    let initial_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&admin_key));
+    assert_ttl_renewed_to_max(initial_ttl);
+
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    // Any admin-gated call re-checks the role, which renews it.
+    client.update_platform_fee(&admin, &300);
+
+    let renewed_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&admin_key));
+    assert_ttl_renewed_to_max(renewed_ttl);
+}
+
+#[test]
+fn extend_purchases_ttl_is_cursor_based_and_bounded() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+
+    // 30 purchases: 5 more than MAX_MAINTENANCE_BATCH (25), proving the
+    // sweep is bounded regardless of the caller's requested `limit`.
+    let mut first_purchase_id = None;
+    for i in 0..30u8 {
+        let buyer = Address::generate(&env);
+        let material_id = bytes32(&env, 100u8.wrapping_add(i));
+        seed_purchasable_material(&env, &registry, &material_id, &creator, &asset, 1_000_000);
+        let purchase_id = client.purchase(
+            &buyer,
+            &material_id,
+            &asset,
+            &1_000_000,
+            &sample_transaction_id(&env),
+        );
+        if first_purchase_id.is_none() {
+            first_purchase_id = Some((purchase_id, material_id, buyer));
+        }
+    }
+    let (first_purchase_id, first_material_id, first_buyer) = first_purchase_id.unwrap();
+
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    // A caller-requested limit far above MAX_MAINTENANCE_BATCH is clamped —
+    // this single call, inside the test harness's default mainnet resource
+    // enforcement, proves the sweep cannot exceed transaction resource
+    // limits regardless of what's requested.
+    let next_cursor = client.extend_purchases_ttl(&0, &10_000);
+    assert_eq!(next_cursor, 25, "batch should be clamped to MAX_MAINTENANCE_BATCH");
+
+    let final_cursor = client.extend_purchases_ttl(&next_cursor, &10_000);
+    assert_eq!(final_cursor, 30);
+
+    // The very first purchase — registered long before the ledger advance —
+    // was renewed by the sweep.
+    let escrow_key = DataKey::Escrow(first_purchase_id);
+    let entitlement_key = DataKey::Entitlement((first_material_id, first_buyer));
+    let renewed_escrow_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&escrow_key));
+    let renewed_entitlement_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&entitlement_key));
+    assert_ttl_renewed_to_max(renewed_escrow_ttl);
+    assert_ttl_renewed_to_max(renewed_entitlement_ttl);
+}
+
+#[test]
+fn extend_allowed_asset_ttl_is_cursor_based() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    let asset_a = Address::generate(&env);
+    let asset_b = Address::generate(&env);
+    client.set_asset_allowed(&admin, &asset_a, &AssetKind::Token, &true);
+    client.set_asset_allowed(&admin, &asset_b, &AssetKind::Token, &true);
+
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    let cursor = client.extend_allowed_asset_ttl(&0, &1);
+    assert_eq!(cursor, 1);
+    let final_cursor = client.extend_allowed_asset_ttl(&cursor, &1);
+    assert_eq!(final_cursor, 2);
+
+    let asset_a_key = DataKey::AllowedAsset(asset_a);
+    let renewed_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_a_key));
+    assert_ttl_renewed_to_max(renewed_ttl);
+}
+
+#[test]
+fn extend_creator_tier_ttl_is_cursor_based() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    let creator_a = Address::generate(&env);
+    let creator_b = Address::generate(&env);
+    client.set_creator_tier(&admin, &creator_a, &CreatorTier::Tier1);
+    client.set_creator_tier(&admin, &creator_b, &CreatorTier::Tier2);
+
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    let cursor = client.extend_creator_tier_ttl(&0, &1);
+    assert_eq!(cursor, 1);
+    let final_cursor = client.extend_creator_tier_ttl(&cursor, &1);
+    assert_eq!(final_cursor, 2);
+
+    let creator_a_key = DataKey::CreatorTier(creator_a);
+    let renewed_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&creator_a_key));
+    assert_ttl_renewed_to_max(renewed_ttl);
+}
+
+#[test]
+fn extend_admin_role_ttl_is_cursor_based() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let admin = Address::generate(&env);
+    let registry = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    let second_admin = Address::generate(&env);
+    client.transfer_admin(&admin, &second_admin);
+    client.accept_admin(&second_admin);
+
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    let cursor = client.extend_admin_role_ttl(&0, &1);
+    assert_eq!(cursor, 1);
+    let final_cursor = client.extend_admin_role_ttl(&cursor, &1);
+    assert_eq!(final_cursor, 2);
+
+    let admin_key = auth::AuthDataKey::AdminRole(admin);
+    let renewed_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&admin_key));
+    assert_ttl_renewed_to_max(renewed_ttl);
 }
