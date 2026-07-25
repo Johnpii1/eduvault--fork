@@ -102,7 +102,16 @@ export async function applyIndexedEvent(db, event, { now = new Date() } = {}) {
       buyerAddress,
     });
     if (purchase) {
-      sendReceiptIfEligible(db, purchase._id).catch(err => console.error(err));
+      const { enqueueSideEffect } = await import('../backend/outbox.js');
+      enqueueSideEffect({
+        sourceAggregate: 'purchase',
+        sourceId: String(purchase._id),
+        intent: {
+          type: 'email',
+          channel: 'purchase_receipt',
+          payload: { source: 'indexer', purchaseId: purchase._id },
+        },
+      }).catch(err => console.error(err));
     }
   }
 
