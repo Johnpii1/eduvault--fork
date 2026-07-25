@@ -70,6 +70,48 @@ function getClientPromise() {
 let indexesCreated = false;
 
 async function ensureIndexes(db) {
+  try {
+    const materials = db.collection("materials");
+    const purchases = db.collection("purchases");
+    const users = db.collection("users");
+    const outbox = db.collection("side_effect_outbox");
+
+    await materials.createIndex(
+      { category: 1, price: 1 },
+      { name: "materials_category_price_idx", background: true },
+    );
+    await materials.createIndex(
+      { title: "text", description: "text" },
+      { name: "materials_text_idx", background: true },
+    );
+    await materials.createIndex(
+      { category: 1, price: 1, title: 1, description: 1 },
+      { name: "materials_search_compound_idx", background: true },
+    );
+
+    await outbox.createIndex(
+      { status: 1, nextAttemptAt: 1, createdAt: 1 },
+      { name: "outbox_poll_idx", background: true },
+    );
+    await outbox.createIndex(
+      { deliveryId: 1 },
+      { name: "outbox_delivery_id_idx", unique: true, background: true },
+    );
+    await outbox.createIndex(
+      { sourceAggregate: 1, sourceId: 1 },
+      { name: "outbox_source_idx", background: true },
+    );
+    await outbox.createIndex(
+      { status: 1, leaseExpiresAt: 1 },
+      { name: "outbox_lease_idx", background: true, sparse: true },
+    );
+
+    console.log("MongoDB indexes ensured successfully.");
+  } catch (error) {
+    console.error(
+      "[Database Index Error]: Failed to create MongoDB indexes:",
+      error,
+    );
   for (const [collectionName, indexes] of Object.entries(REQUIRED_INDEXES)) {
     const collection = db.collection(collectionName);
     for (const { keys, options } of indexes) {
