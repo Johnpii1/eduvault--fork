@@ -11,14 +11,14 @@
  *
  * Flow:
  *  1. Validate params
- *  2. verifyEntitlement() — checks cache → DB → chain
+ *  2. authorizeMaterialAccess() — the single entitlement policy boundary
  *  3. Fetch material record to get the IPFS CID
  *  4. Return a signed/time-limited redirect to the IPFS gateway
  *     (or stream the file through the Next.js edge)
  */
 
 import { NextResponse } from 'next/server';
-import { verifyEntitlement } from '@/lib/entitlement';
+import { authorizeMaterialAccess } from '@/lib/entitlement';
 import { getDb } from '@/lib/mongodb';
 import { getIpfsUrl } from '@/lib/config/chain';
 import { ObjectId } from 'mongodb';
@@ -79,46 +79,24 @@ export async function GET(request) {
     return NextResponse.json({ error: 'Material not found' }, { status: 404 });
   }
 
-  // ── 4. Verify access / entitlement ─────────────────────────────────────────
+  // ── 4. Verify access via the single entitlement policy boundary ─────────────
 
-  const isOwner =
-    normalizeBuyerAddress(material.userAddress) === userAddress ||
-    normalizeBuyerAddress(material.ownerAddress) === userAddress;
+  const decision = await authorizeMaterialAccess({ db, material, buyerAddress });
 
-  let hasAccess = isOwner;
-  let accessSource = 'owner';
-
-  if (!hasAccess) {
-    const price = Number(material.price || 0);
-    if (price <= 0 && material.visibility === 'public') {
-      hasAccess = true;
-      accessSource = 'free-public';
-    } else {
-      let entitlementResult;
-      try {
-        entitlementResult = await verifyEntitlement(materialId, buyerAddress);
-        hasAccess = entitlementResult.hasAccess;
-        accessSource = entitlementResult.source;
-      } catch (err) {
-        console.error('[download] entitlement check error:', err);
-        return NextResponse.json(
-          { error: 'Entitlement verification failed' },
-          { status: 503 }
-        );
-      }
-    }
-  }
-
-  if (!hasAccess) {
+  if (!decision.allowed) {
     return NextResponse.json(
       {
-        error: 'Unlicensed Access',
+        error: decision.state === 'unavailable' ? 'Entitlement verification unavailable' : 'Unlicensed Access',
         detail:
-          'You do not hold an active entitlement for this material. Please purchase it first.',
+          decision.state === 'unavailable'
+            ? 'Could not confirm your entitlement right now. Please try again shortly.'
+            : 'You do not hold an active entitlement for this material. Please purchase it first.',
       },
-      { status: 403 }
+      { status: decision.httpStatus }
     );
   }
+
+  const accessSource = decision.source;
 
   const cid = material.ipfsCid ?? material.cid ?? material.fileHash ?? material.storageKey ?? material.fileUrl ?? '';
 
