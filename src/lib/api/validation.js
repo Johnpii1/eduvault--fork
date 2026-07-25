@@ -377,7 +377,7 @@ export function validateUploadFileMetadata(file, field) {
     );
   }
 
-  const allowedTypes = [
+  const allowedDocumentTypes = [
     "application/pdf",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -390,9 +390,21 @@ export function validateUploadFileMetadata(file, field) {
     "application/x-zip-compressed",
   ];
 
+  const allowedVideoTypes = [
+    "video/mp4",
+    "video/mpeg",
+    "video/quicktime",
+    "video/x-msvideo",
+    "video/webm",
+    "video/ogg",
+    "video/x-matroska",
+  ];
+
+  const allowedTypes = [...allowedDocumentTypes, ...allowedVideoTypes];
+
   if (!allowedTypes.includes(file.type)) {
     throw new ValidationError(
-      `Unsupported file type: ${file.type || "unknown"}. Allowed: PDF, DOC, DOCX, PPT, PPTX, XLS, XLSX, TXT, ZIP`,
+      `Unsupported file type: ${file.type || "unknown"}. Allowed: PDF, DOC, DOCX, PPT, PPTX, XLS, XLSX, TXT, ZIP, MP4, MOV, AVI, WEBM, MKV`,
       { field }
     );
   }
@@ -402,5 +414,6 @@ export function validateUploadFileMetadata(file, field) {
     sizeMB,
     type: file.type,
     name: file.name || null,
+    isVideo: allowedVideoTypes.includes(file.type),
   };
 }

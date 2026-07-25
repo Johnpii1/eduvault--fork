@@ -2192,3 +2192,121 @@ fn extend_admin_role_ttl_is_cursor_based() {
         env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&admin_key));
     assert_ttl_renewed_to_max(renewed_ttl);
 }
+
+#[test]
+fn test_register_usdc_token_asset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::random(&env);
+    let treasury = Address::random(&env);
+    let registry = env.register(MockRegistry, ());
+
+    let contract_id = env.register(PurchaseManager, ());
+    let client = PurchaseManagerClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &registry, &treasury, &500);
+
+    let usdc_address = Address::random(&env);
+
+    client.register_token_asset(&admin, &usdc_address, &true);
+
+    let asset_info = client.get_asset_info(&usdc_address);
+    assert_eq!(asset_info, Some(AssetInfo { kind: AssetKind::Token, enabled: true }));
+
+    assert!(client.is_asset_allowed(&usdc_address));
+}
+
+#[test]
+fn test_register_institution_asset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::random(&env);
+    let treasury = Address::random(&env);
+    let registry = env.register(MockRegistry, ());
+
+    let contract_id = env.register(PurchaseManager, ());
+    let client = PurchaseManagerClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &registry, &treasury, &500);
+
+    let institution_asset = Address::random(&env);
+
+    client.register_institution_asset(&admin, &institution_asset, &true);
+
+    let asset_info = client.get_asset_info(&institution_asset);
+    assert_eq!(asset_info, Some(AssetInfo {
+        kind: AssetKind::InstitutionAsset,
+        enabled: true
+    }));
+
+    assert!(client.is_asset_allowed(&institution_asset));
+}
+
+#[test]
+fn test_purchase_with_usdc() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let buyer = Address::random(&env);
+    let creator = Address::random(&env);
+    let admin = Address::random(&env);
+    let registry_addr = env.register(MockRegistry, ());
+    let usdc_asset = env.register(MockAsset, ());
+
+    let registry_client = MockRegistryClient::new(&env, &registry_addr);
+    let material_id = env.sha512_256(b"material_1");
+
+    registry_client.set_material(&material_id, &MaterialRecord {
+        material_id: material_id.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![&env, AssetQuote {
+            asset: usdc_asset.clone(),
+            amount: 5_000_000, // 50 USDC in 6 decimals
+        }],
+        payout_shares: vec![&env],
+    });
+
+    let contract_id = env.register(PurchaseManager, ());
+    let client = PurchaseManagerClient::new(&env, &contract_id);
+    let _asset_client = MockAssetClient::new(&env, &usdc_asset);
+
+    client.initialize(&admin, &registry_addr, &Address::random(&env), &500);
+    client.register_token_asset(&admin, &usdc_asset, &true);
+
+    let sample_tx_id = env.sha512_256(b"test_transaction_usdc_1");
+
+    let purchase_id = client.purchase(&buyer, &material_id, &usdc_asset, &5_000_000, &sample_tx_id);
+    assert!(purchase_id > 0);
+
+    assert!(client.has_entitlement(&material_id, &buyer));
+}
+
+#[test]
+fn test_disable_asset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::random(&env);
+    let treasury = Address::random(&env);
+    let registry = env.register(MockRegistry, ());
+
+    let contract_id = env.register(PurchaseManager, ());
+    let client = PurchaseManagerClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &registry, &treasury, &500);
+
+    let usdc_address = Address::random(&env);
+
+    client.register_token_asset(&admin, &usdc_address, &true);
+    assert!(client.is_asset_allowed(&usdc_address));
+
+    client.set_asset_allowed(&admin, &usdc_address, &AssetKind::Token, &false);
+    assert!(!client.is_asset_allowed(&usdc_address));
+
+    let asset_info = client.get_asset_info(&usdc_address);
+    assert_eq!(asset_info, Some(AssetInfo { kind: AssetKind::Token, enabled: false }));
+}

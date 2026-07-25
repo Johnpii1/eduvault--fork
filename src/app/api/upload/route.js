@@ -9,11 +9,12 @@ import { validatePinataResponse, validateGatewayUrl, retryWithBackoff } from '@/
 export const dynamic = 'force-dynamic'
 
 // --- Validation Constants ---
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10MB
+const MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024 // 10MB
+const MAX_VIDEO_SIZE_BYTES = 2 * 1024 * 1024 * 1024 // 2GB
 const MAX_THUMBNAIL_SIZE_BYTES = 5 * 1024 * 1024 // 5MB
 
 // Common educational document MIME types
-const ALLOWED_FILE_TYPES = [
+const ALLOWED_DOCUMENT_TYPES = [
   'application/pdf',
   'application/msword', // .doc
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
@@ -25,6 +26,19 @@ const ALLOWED_FILE_TYPES = [
   'application/zip',
   'application/x-zip-compressed',
 ]
+
+// Allowed video MIME types for educational content
+const ALLOWED_VIDEO_TYPES = [
+  'video/mp4',
+  'video/mpeg',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/webm',
+  'video/ogg',
+  'video/x-matroska',
+]
+
+const ALLOWED_FILE_TYPES = [...ALLOWED_DOCUMENT_TYPES, ...ALLOWED_VIDEO_TYPES]
 
 // Allowed thumbnail image types
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
@@ -49,7 +63,11 @@ export async function POST(request) {
         }
 
         // 2️⃣ Validate Main File (Size & Type)
-        if (file.size > MAX_FILE_SIZE_BYTES) {
+        const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type)
+        const maxFileSize = isVideo ? MAX_VIDEO_SIZE_BYTES : MAX_DOCUMENT_SIZE_BYTES
+        const maxSizeMB = isVideo ? 2048 : 10
+
+        if (file.size > maxFileSize) {
           const sizeMB = (file.size / (1024 * 1024)).toFixed(2)
           auditLog({ event: 'upload_failed', route: 'upload', method: 'POST', status: 413, reason: 'file_too_large' })
           return NextResponse.json({ error: `File size (${sizeMB}MB) exceeds the 10MB limit.` }, { status: 413 })
