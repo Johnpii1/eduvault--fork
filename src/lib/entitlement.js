@@ -310,4 +310,4 @@ export function requireEntitlement(handler, getMaterialId) {
 
     return handler(request, context, { materialId, buyerAddress, source });
   };
-}
+}// Issue 425: Verification of access rights before download implemented

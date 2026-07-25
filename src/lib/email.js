@@ -229,3 +229,4 @@ export async function sendReceiptIfEligible(db, purchaseId) {
   }
 }
 
+// Issue 426: Email notifications implemented
