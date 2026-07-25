@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, BytesN, Env,
-    IntoVal, Symbol, Vec,
+    IntoVal, Symbol, Val, Vec,
 };
 
 pub mod auth;
@@ -12,6 +12,19 @@ const MAX_PLATFORM_FEE_BPS: u32 = 1_000;
 const MAX_PAYOUT_RECIPIENTS: u32 = 5;
 const ESCROW_LOCK_PERIOD_LEDGERS: u32 = 35_000;
 const DISPUTE_WINDOW_LEDGERS: u32 = 30_000;
+
+/// TTL renewal policy (#464): whenever a tracked entry's remaining TTL drops
+/// below half of the network's configured maximum, extend it back out to
+/// the maximum. See ../../docs/ttl-operations.md for the operational
+/// rationale, renewal cadence, and alert thresholds.
+const TTL_RENEWAL_DIVISOR: u32 = 2;
+
+/// Upper bound on how many records a single maintenance call will touch, so
+/// a TTL-renewal sweep can never exceed a transaction's resource limits
+/// regardless of what a caller passes as `limit`. Mirrors the same
+/// footprint-budget reasoning as material-registry's constant of the same
+/// name — verified directly by this contract's maintenance-sweep tests.
+const MAX_MAINTENANCE_BATCH: u32 = 25;
 
 /// Volume-tier discounted fee rates (basis points).
 /// Tier 1: 2.5 %, Tier 2: 1.5 %.
@@ -182,9 +195,12 @@ pub struct DisputeRecord {
 #[contracttype]
 #[derive(Clone)]
 enum DataKey {
+    /// Instance storage (#464 Tier A) — shares the contract instance's own
+    /// TTL, so it never needs independent renewal.
     PlatformConfig,
-    AllowedAsset(Address),
     PurchaseNonce,
+    PendingAdmin,
+    AllowedAsset(Address),
     Entitlement((BytesN<32>, Address)),
     Escrow(u64),
     Settlement(u64),
@@ -192,6 +208,26 @@ enum DataKey {
     PurchaseBuyer(u64),
     PendingAdmin,
     CreatorTier(Address),
+    /// Maintenance index (#464): sequential slot -> (purchase_id,
+    /// material_id, buyer), populated at purchase time so
+    /// `extend_purchases_ttl` can renew both the `Escrow` and `Entitlement`
+    /// halves of a purchase together without off-chain enumeration.
+    PurchaseIndex(u64),
+    /// Instance storage: total number of `PurchaseIndex` slots populated.
+    PurchaseIndexCount,
+    /// Maintenance index (#464): sequential slot -> asset address.
+    AllowedAssetIndex(u64),
+    /// Instance storage: total number of `AllowedAssetIndex` slots populated.
+    AllowedAssetIndexCount,
+    /// Maintenance index (#464): sequential slot -> creator address.
+    CreatorTierIndex(u64),
+    /// Instance storage: total number of `CreatorTierIndex` slots populated.
+    CreatorTierIndexCount,
+    /// Instance storage: total number of `auth::AuthDataKey::AdminRoleIndex`
+    /// slots populated. Lives here (rather than in `auth`) purely so every
+    /// maintenance counter is defined in one place; the index entries
+    /// themselves stay in `auth`'s own storage namespace.
+    AdminRoleIndexCount,
 }
 
 /// Contract errors
@@ -487,7 +523,8 @@ impl PurchaseManager {
     ) -> Result<(), PurchaseError> {
         admin.require_auth();
 
-        if env.storage().persistent().has(&DataKey::PlatformConfig) {
+        // Check if already initialized
+        if env.storage().instance().has(&DataKey::PlatformConfig) {
             return Err(PurchaseError::AlreadyInitialized);
         }
 
@@ -508,12 +545,9 @@ impl PurchaseManager {
         };
 
         auth::set_admin_role(&env, &admin);
-        env.storage()
-            .persistent()
-            .set(&DataKey::PlatformConfig, &config);
-        env.storage()
-            .persistent()
-            .set(&DataKey::PurchaseNonce, &0u64);
+        put_platform_config(&env, &config);
+        env.storage().instance().set(&DataKey::PurchaseNonce, &0u64);
+        extend_instance_ttl(&env);
 
         PlatformConfigUpdatedEvent {
             treasury,
@@ -638,6 +672,7 @@ impl PurchaseManager {
         };
 
         set_entitlement(&env, &entitlement);
+        index_purchase(&env, purchase_id, &material_id, &buyer);
 
         // Store purchase → buyer mapping for admin refunds
         env.storage()
@@ -687,7 +722,7 @@ impl PurchaseManager {
 
     /// Get current platform configuration
     pub fn get_platform_config(env: Env) -> Option<PlatformConfig> {
-        env.storage().persistent().get(&DataKey::PlatformConfig)
+        get_platform_config(&env).ok()
     }
 
     /// Check if an asset is globally allowed for purchases
@@ -1265,10 +1300,16 @@ impl PurchaseManager {
     ) -> Result<(), PurchaseError> {
         auth::require_admin(&env, &admin)?;
 
+        let asset_key = DataKey::AllowedAsset(asset.clone());
+        let is_new_asset = !env.storage().persistent().has(&asset_key);
+
         let info = AssetInfo { kind, enabled };
-        env.storage()
-            .persistent()
-            .set(&DataKey::AllowedAsset(asset.clone()), &info);
+        env.storage().persistent().set(&asset_key, &info);
+        extend_persistent_ttl(&env, &asset_key);
+
+        if is_new_asset {
+            index_allowed_asset(&env, &asset);
+        }
 
         AssetPolicyUpdatedEvent {
             asset,
@@ -1308,9 +1349,7 @@ impl PurchaseManager {
             oracle: current_config.oracle,
         };
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::PlatformConfig, &new_config);
+        put_platform_config(&env, &new_config);
 
         PlatformConfigUpdatedEvent {
             treasury,
@@ -1324,9 +1363,12 @@ impl PurchaseManager {
 
     /// Returns the full `AssetInfo` record for `asset`, if present.
     pub fn get_asset_info(env: Env, asset: Address) -> Option<AssetInfo> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::AllowedAsset(asset))
+        let key = DataKey::AllowedAsset(asset);
+        let info = env.storage().persistent().get(&key);
+        if info.is_some() {
+            extend_persistent_ttl(&env, &key);
+        }
+        info
     }
 
     /// Configure the price-oracle address (admin only).
@@ -1339,9 +1381,7 @@ impl PurchaseManager {
 
         let mut config = get_platform_config(&env)?;
         config.oracle = oracle;
-        env.storage()
-            .persistent()
-            .set(&DataKey::PlatformConfig, &config);
+        put_platform_config(&env, &config);
 
         Ok(())
     }
@@ -1353,9 +1393,7 @@ impl PurchaseManager {
         let mut config = get_platform_config(&env)?;
         config.registry = registry;
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::PlatformConfig, &config);
+        put_platform_config(&env, &config);
 
         Ok(())
     }
@@ -1366,8 +1404,7 @@ impl PurchaseManager {
         admin: Address,
         new_platform_fee_bps: u32,
     ) -> Result<(), PurchaseError> {
-        admin.require_auth();
-        verify_admin(&env, &admin)?;
+        auth::require_admin(&env, &admin)?;
 
         if new_platform_fee_bps > MAX_PLATFORM_FEE_BPS {
             return Err(PurchaseError::InvalidPlatformFee);
@@ -1376,9 +1413,7 @@ impl PurchaseManager {
         let mut config = get_platform_config(&env)?;
         config.platform_fee_bps = new_platform_fee_bps;
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::PlatformConfig, &config);
+        put_platform_config(&env, &config);
 
         PlatformConfigUpdatedEvent {
             treasury: config.treasury.clone(),
@@ -1397,9 +1432,7 @@ impl PurchaseManager {
         let mut config = get_platform_config(&env)?;
         config.paused = true;
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::PlatformConfig, &config);
+        put_platform_config(&env, &config);
 
         PlatformConfigUpdatedEvent {
             treasury: config.treasury,
@@ -1418,9 +1451,7 @@ impl PurchaseManager {
         let mut config = get_platform_config(&env)?;
         config.paused = false;
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::PlatformConfig, &config);
+        put_platform_config(&env, &config);
 
         PlatformConfigUpdatedEvent {
             treasury: config.treasury,
@@ -1451,12 +1482,10 @@ impl PurchaseManager {
         admin: Address,
         new_admin: Address,
     ) -> Result<(), PurchaseError> {
-        admin.require_auth();
-        verify_admin(&env, &admin)?;
+        auth::require_admin(&env, &admin)?;
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::PendingAdmin, &new_admin);
+        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        extend_instance_ttl(&env);
 
         AdminTransferInitiatedEvent {
             from: admin,
@@ -1473,18 +1502,18 @@ impl PurchaseManager {
 
         let pending: Address = env
             .storage()
-            .persistent()
+            .instance()
             .get(&DataKey::PendingAdmin)
             .ok_or(PurchaseError::NoPendingAdminTransfer)?;
+        extend_instance_ttl(&env);
 
         if pending != new_admin {
             return Err(PurchaseError::NotAuthorized);
         }
 
         auth::set_admin_role(&env, &new_admin);
-        env.storage()
-            .persistent()
-            .remove(&DataKey::PendingAdmin);
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        extend_instance_ttl(&env);
 
         AdminTransferAcceptedEvent {
             new_admin: new_admin.clone(),
@@ -1496,7 +1525,9 @@ impl PurchaseManager {
 
     /// Return the pending admin address, if a transfer is in progress.
     pub fn get_pending_admin(env: Env) -> Option<Address> {
-        env.storage().persistent().get(&DataKey::PendingAdmin)
+        let pending = env.storage().instance().get(&DataKey::PendingAdmin);
+        extend_instance_ttl(&env);
+        pending
     }
 
     /// Return the buyer address for a purchase, if known.
@@ -1515,12 +1546,17 @@ impl PurchaseManager {
         creator: Address,
         tier: CreatorTier,
     ) -> Result<(), PurchaseError> {
-        admin.require_auth();
-        verify_admin(&env, &admin)?;
+        auth::require_admin(&env, &admin)?;
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::CreatorTier(creator.clone()), &tier);
+        let tier_key = DataKey::CreatorTier(creator.clone());
+        let is_new_creator = !env.storage().persistent().has(&tier_key);
+
+        env.storage().persistent().set(&tier_key, &tier);
+        extend_persistent_ttl(&env, &tier_key);
+
+        if is_new_creator {
+            index_creator_tier(&env, &creator);
+        }
 
         CreatorTierUpdatedEvent {
             creator,
@@ -1533,23 +1569,214 @@ impl PurchaseManager {
 
     /// Return the volume tier assigned to a creator.
     pub fn get_creator_tier(env: Env, creator: Address) -> CreatorTier {
-        env.storage()
-            .persistent()
-            .get(&DataKey::CreatorTier(creator))
-            .unwrap_or(CreatorTier::Default)
+        let key = DataKey::CreatorTier(creator);
+        let tier = env.storage().persistent().get(&key);
+        if tier.is_some() {
+            extend_persistent_ttl(&env, &key);
+        }
+        tier.unwrap_or(CreatorTier::Default)
     }
+
+    // ============== TTL Maintenance (#464) ==============
+
+    /// Bump the TTL of up to `limit` (capped at `MAX_MAINTENANCE_BATCH`)
+    /// purchases — both the `Escrow` and `Entitlement` halves together —
+    /// starting at `cursor`. Permissionless, cursor-based; this is the
+    /// entrypoint that specifically protects paid access and escrowed
+    /// funds, which otherwise have no natural heartbeat once a buyer stops
+    /// re-checking their entitlement.
+    ///
+    /// Returns the cursor to resume from. Skips (rather than aborts on) any
+    /// slot whose escrow/entitlement has already expired/archived — see
+    /// ../../docs/ttl-operations.md for the restoration runbook.
+    pub fn extend_purchases_ttl(env: Env, cursor: u64, limit: u32) -> u64 {
+        let limit = (limit.min(MAX_MAINTENANCE_BATCH)) as u64;
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PurchaseIndexCount)
+            .unwrap_or(0);
+        extend_instance_ttl(&env);
+
+        let end = cursor.saturating_add(limit).min(count);
+        let mut i = cursor;
+        while i < end {
+            let index_key = DataKey::PurchaseIndex(i);
+            if let Some((purchase_id, material_id, buyer)) = env
+                .storage()
+                .persistent()
+                .get::<_, (u64, BytesN<32>, Address)>(&index_key)
+            {
+                extend_persistent_ttl(&env, &index_key);
+
+                let escrow_key = DataKey::Escrow(purchase_id);
+                if env.storage().persistent().has(&escrow_key) {
+                    extend_persistent_ttl(&env, &escrow_key);
+                }
+
+                let entitlement_key = DataKey::Entitlement((material_id, buyer));
+                if env.storage().persistent().has(&entitlement_key) {
+                    extend_persistent_ttl(&env, &entitlement_key);
+                }
+            }
+            i += 1;
+        }
+
+        end
+    }
+
+    /// Bump the TTL of up to `limit` allowlisted assets, starting at
+    /// `cursor`. Same semantics as `extend_purchases_ttl`.
+    pub fn extend_allowed_asset_ttl(env: Env, cursor: u64, limit: u32) -> u64 {
+        let limit = (limit.min(MAX_MAINTENANCE_BATCH)) as u64;
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::AllowedAssetIndexCount)
+            .unwrap_or(0);
+        extend_instance_ttl(&env);
+
+        let end = cursor.saturating_add(limit).min(count);
+        let mut i = cursor;
+        while i < end {
+            let index_key = DataKey::AllowedAssetIndex(i);
+            if let Some(asset) = env.storage().persistent().get::<_, Address>(&index_key) {
+                extend_persistent_ttl(&env, &index_key);
+                let asset_key = DataKey::AllowedAsset(asset);
+                if env.storage().persistent().has(&asset_key) {
+                    extend_persistent_ttl(&env, &asset_key);
+                }
+            }
+            i += 1;
+        }
+
+        end
+    }
+
+    /// Bump the TTL of up to `limit` creator-tier assignments, starting at
+    /// `cursor`. Same semantics as `extend_purchases_ttl`.
+    pub fn extend_creator_tier_ttl(env: Env, cursor: u64, limit: u32) -> u64 {
+        let limit = (limit.min(MAX_MAINTENANCE_BATCH)) as u64;
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::CreatorTierIndexCount)
+            .unwrap_or(0);
+        extend_instance_ttl(&env);
+
+        let end = cursor.saturating_add(limit).min(count);
+        let mut i = cursor;
+        while i < end {
+            let index_key = DataKey::CreatorTierIndex(i);
+            if let Some(creator) = env.storage().persistent().get::<_, Address>(&index_key) {
+                extend_persistent_ttl(&env, &index_key);
+                let tier_key = DataKey::CreatorTier(creator);
+                if env.storage().persistent().has(&tier_key) {
+                    extend_persistent_ttl(&env, &tier_key);
+                }
+            }
+            i += 1;
+        }
+
+        end
+    }
+
+    /// Bump the TTL of up to `limit` admin-role grants, starting at
+    /// `cursor`. Same semantics as `extend_purchases_ttl`; delegates to
+    /// `auth`, which owns the `AdminRole` storage namespace.
+    pub fn extend_admin_role_ttl(env: Env, cursor: u64, limit: u32) -> u64 {
+        auth::extend_admin_role_ttl(&env, cursor, limit)
+    }
+}
+
+// ============== TTL Renewal (#464) ==============
+
+/// Extends `key`'s persistent-storage TTL back out to the network maximum
+/// whenever it has dropped below half of that maximum. Safe and cheap to
+/// call on every read and write of a tracked key — a no-op when the TTL is
+/// already healthy. `pub(crate)` so `auth.rs` can reuse it for `AdminRole`.
+pub(crate) fn extend_persistent_ttl<K: IntoVal<Env, Val>>(env: &Env, key: &K) {
+    let max_ttl = env.storage().max_ttl();
+    env.storage()
+        .persistent()
+        .extend_ttl(key, max_ttl / TTL_RENEWAL_DIVISOR, max_ttl);
+}
+
+/// Extends the contract instance's TTL — and therefore everything stored in
+/// instance storage alongside it (`PlatformConfig`, `PurchaseNonce`,
+/// `PendingAdmin`, the maintenance counters) — back out to the network
+/// maximum whenever it has dropped below half of that maximum.
+pub(crate) fn extend_instance_ttl(env: &Env) {
+    let max_ttl = env.storage().max_ttl();
+    env.storage()
+        .instance()
+        .extend_ttl(max_ttl / TTL_RENEWAL_DIVISOR, max_ttl);
+}
+
+/// Appends `(purchase_id, material_id, buyer)` to the purchase maintenance
+/// index and bumps the instance-stored count, so `extend_purchases_ttl` can
+/// renew both the `Escrow` and `Entitlement` halves of every purchase
+/// without off-chain enumeration.
+fn index_purchase(env: &Env, purchase_id: u64, material_id: &BytesN<32>, buyer: &Address) {
+    let count: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::PurchaseIndexCount)
+        .unwrap_or(0);
+    let index_key = DataKey::PurchaseIndex(count);
+    let entry = (purchase_id, material_id.clone(), buyer.clone());
+    env.storage().persistent().set(&index_key, &entry);
+    extend_persistent_ttl(env, &index_key);
+    env.storage()
+        .instance()
+        .set(&DataKey::PurchaseIndexCount, &(count + 1));
+    extend_instance_ttl(env);
+}
+
+/// Appends `asset` to the allowlist maintenance index. Only called the
+/// first time an asset is added to the allowlist.
+fn index_allowed_asset(env: &Env, asset: &Address) {
+    let count: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::AllowedAssetIndexCount)
+        .unwrap_or(0);
+    let index_key = DataKey::AllowedAssetIndex(count);
+    env.storage().persistent().set(&index_key, asset);
+    extend_persistent_ttl(env, &index_key);
+    env.storage()
+        .instance()
+        .set(&DataKey::AllowedAssetIndexCount, &(count + 1));
+    extend_instance_ttl(env);
+}
+
+/// Appends `creator` to the creator-tier maintenance index. Only called the
+/// first time a tier is assigned to that creator.
+fn index_creator_tier(env: &Env, creator: &Address) {
+    let count: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::CreatorTierIndexCount)
+        .unwrap_or(0);
+    let index_key = DataKey::CreatorTierIndex(count);
+    env.storage().persistent().set(&index_key, creator);
+    extend_persistent_ttl(env, &index_key);
+    env.storage()
+        .instance()
+        .set(&DataKey::CreatorTierIndexCount, &(count + 1));
+    extend_instance_ttl(env);
 }
 
 // ============== Internal Functions ==============
 
 /// Return the effective platform fee rate for `creator`.
 fn get_effective_fee_bps(env: &Env, creator: &Address, config_fee_bps: u32) -> u32 {
-    match env
-        .storage()
-        .persistent()
-        .get::<DataKey, CreatorTier>(&DataKey::CreatorTier(creator.clone()))
-        .unwrap_or(CreatorTier::Default)
-    {
+    let key = DataKey::CreatorTier(creator.clone());
+    let tier: Option<CreatorTier> = env.storage().persistent().get(&key);
+    if tier.is_some() {
+        extend_persistent_ttl(env, &key);
+    }
+    match tier.unwrap_or(CreatorTier::Default) {
         CreatorTier::Default => config_fee_bps,
         CreatorTier::Tier1 => TIER1_FEE_BPS,
         CreatorTier::Tier2 => TIER2_FEE_BPS,
@@ -1557,18 +1784,27 @@ fn get_effective_fee_bps(env: &Env, creator: &Address, config_fee_bps: u32) -> u
 }
 
 fn get_platform_config(env: &Env) -> Result<PlatformConfig, PurchaseError> {
-    env.storage()
-        .persistent()
+    let config = env
+        .storage()
+        .instance()
         .get(&DataKey::PlatformConfig)
-        .ok_or(PurchaseError::NotAuthorized)
+        .ok_or(PurchaseError::NotAuthorized)?;
+    extend_instance_ttl(env);
+    Ok(config)
+}
+
+fn put_platform_config(env: &Env, config: &PlatformConfig) {
+    env.storage().instance().set(&DataKey::PlatformConfig, config);
+    extend_instance_ttl(env);
 }
 
 fn is_asset_allowed(env: &Env, asset: &Address) -> bool {
-    env.storage()
-        .persistent()
-        .get::<DataKey, AssetInfo>(&DataKey::AllowedAsset(asset.clone()))
-        .map(|info| info.enabled)
-        .unwrap_or(false)
+    let key = DataKey::AllowedAsset(asset.clone());
+    let info: Option<AssetInfo> = env.storage().persistent().get(&key);
+    if info.is_some() {
+        extend_persistent_ttl(env, &key);
+    }
+    info.map(|info| info.enabled).unwrap_or(false)
 }
 
 fn find_quote(quotes: &Vec<AssetQuote>, asset: &Address) -> Option<AssetQuote> {
@@ -1586,12 +1822,13 @@ fn find_quote(quotes: &Vec<AssetQuote>, asset: &Address) -> Option<AssetQuote> {
 fn get_and_increment_purchase_nonce(env: &Env) -> Result<u64, PurchaseError> {
     let nonce: u64 = env
         .storage()
-        .persistent()
+        .instance()
         .get(&DataKey::PurchaseNonce)
         .ok_or(PurchaseError::NotAuthorized)?;
     env.storage()
-        .persistent()
+        .instance()
         .set(&DataKey::PurchaseNonce, &(nonce + 1));
+    extend_instance_ttl(env);
     Ok(nonce)
 }
 
@@ -1648,33 +1885,42 @@ fn has_entitlement_internal(env: &Env, material_id: &BytesN<32>, buyer: &Address
         .unwrap_or(false)
 }
 
+/// Reads an entitlement and, when present, extends its TTL — the primary
+/// organic renewal path for paid access (#464 Tier D): a buyer actively
+/// using what they paid for keeps their own record alive for free, every
+/// time a content-access check runs.
 fn get_entitlement_internal(
     env: &Env,
     material_id: &BytesN<32>,
     buyer: &Address,
 ) -> Option<EntitlementRecord> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Entitlement((material_id.clone(), buyer.clone())))
+    let key = DataKey::Entitlement((material_id.clone(), buyer.clone()));
+    let entitlement = env.storage().persistent().get(&key);
+    if entitlement.is_some() {
+        extend_persistent_ttl(env, &key);
+    }
+    entitlement
 }
 
 fn set_entitlement(env: &Env, entitlement: &EntitlementRecord) {
-    env.storage().persistent().set(
-        &DataKey::Entitlement((entitlement.material_id.clone(), entitlement.buyer.clone())),
-        entitlement,
-    );
+    let key = DataKey::Entitlement((entitlement.material_id.clone(), entitlement.buyer.clone()));
+    env.storage().persistent().set(&key, entitlement);
+    extend_persistent_ttl(env, &key);
 }
 
 fn get_escrow_record_internal(env: &Env, purchase_id: u64) -> Option<EscrowRecord> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Escrow(purchase_id))
+    let key = DataKey::Escrow(purchase_id);
+    let escrow = env.storage().persistent().get(&key);
+    if escrow.is_some() {
+        extend_persistent_ttl(env, &key);
+    }
+    escrow
 }
 
 fn set_escrow_record(env: &Env, purchase_id: u64, record: &EscrowRecord) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::Escrow(purchase_id), record);
+    let key = DataKey::Escrow(purchase_id);
+    env.storage().persistent().set(&key, record);
+    extend_persistent_ttl(env, &key);
 }
 
 fn get_settlement_record_internal(env: &Env, purchase_id: u64) -> Option<SettlementRecord> {
@@ -1726,6 +1972,10 @@ fn distribute_payout_shares_from_contract(
                 role: Symbol::new(env, "creator_share"),
                 asset: escrow.asset.clone(),
                 amount: share_amount,
+                // EscrowRecord does not carry the originating purchase's
+                // transaction_id, so the delayed-release payout event can't
+                // correlate back to it — empty Bytes is an accepted value
+                // for this field (see `empty_transaction_id_is_accepted`).
                 transaction_id: Bytes::new(env),
             }
             .publish(env);

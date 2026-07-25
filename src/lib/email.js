@@ -180,6 +180,8 @@ export async function sendPurchaseReceiptEmail(to, purchase, material) {
   await transporter.sendMail({ from, to, subject, text, html });
 }
 
+import { enqueueSideEffect } from '@/lib/backend/outbox';
+
 export async function sendReceiptIfEligible(db, purchaseId) {
   try {
     const purchase = await db.collection('purchases').findOne({ _id: new ObjectId(String(purchaseId)) });
@@ -208,13 +210,22 @@ export async function sendReceiptIfEligible(db, purchaseId) {
     });
     if (!material) return;
 
-    await sendPurchaseReceiptEmail(email, purchase, material);
+    await enqueueSideEffect({
+      sourceAggregate: 'purchase',
+      sourceId: String(purchase._id),
+      intent: {
+        type: 'email',
+        channel: 'purchase_receipt',
+        payload: { email, purchase, material },
+      },
+    });
+
     await db.collection('purchases').updateOne(
       { _id: purchase._id },
       { $set: { receiptSent: true } }
     );
   } catch (err) {
-    console.error('Failed to send receipt email:', err);
+    console.error('Failed to enqueue receipt email:', err);
   }
 }
 

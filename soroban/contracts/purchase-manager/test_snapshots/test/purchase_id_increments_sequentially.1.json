@@ -170,12 +170,19 @@
               "ext": "v0",
               "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
               "key": {
-                "ledger_key_nonce": {
-                  "nonce": "5541220902715666415"
-                }
+                "vec": [
+                  {
+                    "symbol": "AdminRole"
+                  },
+                  {
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                  }
+                ]
               },
-              "durability": "temporary",
-              "val": "void"
+              "durability": "persistent",
+              "val": {
+                "bool": true
+              }
             }
           },
           "ext": "v0"
@@ -374,6 +381,10 @@
                 "vec": [
                   {
                     "symbol": "Transfers"
+                    "symbol": "AdminRoleIndex"
+                  },
+                  {
+                    "u64": "0"
                   }
                 ]
               },
@@ -493,12 +504,13 @@
                     ]
                   }
                 ]
+                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 6311999
       },
       {
         "entry": {
@@ -1301,14 +1313,90 @@
                   "executable": {
                     "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                   },
-                  "storage": null
+                  "storage": [
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "AdminRoleIndexCount"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u64": "1"
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "PlatformConfig"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "map": [
+                          {
+                            "key": {
+                              "symbol": "oracle"
+                            },
+                            "val": "void"
+                          },
+                          {
+                            "key": {
+                              "symbol": "paused"
+                            },
+                            "val": {
+                              "bool": false
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "platform_fee_bps"
+                            },
+                            "val": {
+                              "u32": 500
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "registry"
+                            },
+                            "val": {
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                            }
+                          },
+                          {
+                            "key": {
+                              "symbol": "treasury"
+                            },
+                            "val": {
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "PurchaseNonce"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u64": "0"
+                      }
+                    }
+                  ]
                 }
               }
             }
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 6311999
       },
       {
         "entry": {
@@ -1322,7 +1410,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 6311999
       }
     ]
   },
