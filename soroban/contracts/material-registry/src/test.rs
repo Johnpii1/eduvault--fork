@@ -3,7 +3,8 @@
 extern crate std;
 
 use super::*;
-use soroban_sdk::testutils::{Address as _, Events as _};
+use soroban_sdk::testutils::storage::{Instance as _, Persistent as _};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::{vec, Event};
 
 fn install_contract(env: &Env) -> (Address, MaterialRegistryClient<'_>) {
@@ -93,7 +94,20 @@ fn seed_material(
         created_ledger: env.ledger().sequence(),
         updated_ledger: env.ledger().sequence(),
     };
-    env.as_contract(contract_id, || put_material(env, &record));
+    env.as_contract(contract_id, || {
+        put_material_core(
+            env,
+            material_id,
+            &MaterialCore {
+                creator: record.creator.clone(),
+                metadata_uri: record.metadata_uri.clone(),
+                metadata_hash: record.metadata_hash.clone(),
+                rights_hash: record.rights_hash.clone(),
+                created_ledger: record.created_ledger,
+            },
+        );
+        put_material_sale(env, material_id, &sale_state_from_record(&record));
+    });
     record
 }
 
@@ -681,4 +695,355 @@ fn first_registration_skips_asset_validation() {
     );
     // Should succeed even though no assets are pre-approved.
     assert!(result.is_ok());
+}
+
+// ============== Storage cost comparison (#255) ==============
+//
+// Sale-term/status updates are the most frequent write path in the registry
+// (price changes, pausing, archiving), far outnumbering initial
+// registrations over a material's lifetime. Prior to the MaterialCore /
+// MaterialSaleState split, every one of those updates rewrote the *entire*
+// record — creator, metadata_uri (up to 256 bytes), both 32-byte hashes, and
+// created_ledger — none of which ever change after registration. This test
+// measures the write cost of that legacy single-entry shape against the new
+// split layout's update path, using the SDK's invocation cost metering.
+
+/// Mirrors the pre-#255 combined storage entry: every field the registry
+/// used to rewrite on every single call, including the redundant
+/// `material_id` (already implied by the storage key).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LegacyMaterialRecord {
+    material_id: BytesN<32>,
+    creator: Address,
+    metadata_uri: String,
+    metadata_hash: BytesN<32>,
+    rights_hash: BytesN<32>,
+    paused: bool,
+    status: MaterialStatus,
+    quotes: Vec<AssetQuote>,
+    payout_shares: Vec<PayoutShare>,
+    created_ledger: u32,
+    updated_ledger: u32,
+}
+
+#[contracttype]
+#[derive(Clone)]
+enum LegacyDataKey {
+    Material(BytesN<32>),
+}
+
+#[test]
+fn sale_term_update_write_cost_drops_at_least_20_percent_vs_legacy_layout() {
+    let env = Env::default();
+    let (contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let material_id = client.register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &default_quotes(&env),
+        &default_payout_shares(&env),
+    );
+
+    let next_quotes = replacement_quotes(&env);
+    let tracked_asset = next_quotes.get_unchecked(0).asset.clone();
+    let next_payout_shares = replacement_payout_shares(&env);
+    // Approve the replacement asset before updating sale terms — the
+    // upgrade-admin is the first creator; auth is mocked for the whole test.
+    client.set_asset_allowed(&creator, &tracked_asset, &AssetKind::Token, &true);
+
+    // Baseline: cost of rewriting the legacy single-entry record shape, as
+    // the pre-#255 `update_sale_terms` implementation used to do on every
+    // sale-term update.
+    let legacy_record = LegacyMaterialRecord {
+        material_id: material_id.clone(),
+        creator: creator.clone(),
+        metadata_uri: metadata_uri(&env),
+        metadata_hash: bytes32(&env, 1),
+        rights_hash: bytes32(&env, 2),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: next_quotes.clone(),
+        payout_shares: next_payout_shares.clone(),
+        created_ledger: env.ledger().sequence(),
+        updated_ledger: env.ledger().sequence(),
+    };
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&LegacyDataKey::Material(material_id.clone()), &legacy_record);
+    });
+    let legacy_write_bytes = env.cost_estimate().resources().write_bytes;
+
+    // New: cost of the actual `update_sale_terms` call, which now only
+    // rewrites the MaterialSale entry.
+    client.update_sale_terms(&material_id, &next_quotes, &next_payout_shares);
+    let split_write_bytes = env.cost_estimate().resources().write_bytes;
+
+    std::println!(
+        "material-registry storage comparison — legacy single-entry write: {} bytes; \
+         split MaterialSale-only write: {} bytes ({:.1}% reduction)",
+        legacy_write_bytes,
+        split_write_bytes,
+        100.0 * (1.0 - (split_write_bytes as f64 / legacy_write_bytes as f64))
+    );
+
+    assert!(
+        (split_write_bytes as f64) <= (legacy_write_bytes as f64) * 0.8,
+        "expected at least a 20% reduction in write bytes: legacy={} split={}",
+        legacy_write_bytes,
+        split_write_bytes,
+    );
+}
+
+// ============== TTL Renewal Tests (#464) ==============
+
+/// Small, deterministic TTL window for these tests: large enough to clear
+/// the network's minimum persistent-entry TTL, small enough that advancing
+/// a few thousand ledgers is enough to cross the renewal threshold.
+fn set_short_ttl_window(env: &Env) {
+    env.ledger().with_mut(|li| {
+        li.min_persistent_entry_ttl = 100;
+        li.max_entry_ttl = 20_000;
+    });
+}
+
+/// The test host advances the ledger sequence by a small amount between
+/// separate top-level invocations, so a TTL measured a call or two after a
+/// renewal can read a few ledgers below the exact `extend_to` value. Allow
+/// a small tolerance rather than asserting an exact figure.
+fn assert_ttl_renewed_to_max(ttl: u32) {
+    assert!(
+        ttl <= 20_000 && ttl >= 19_990,
+        "expected TTL near the 20_000 max, got {ttl}"
+    );
+}
+
+#[test]
+fn upgrade_admin_ttl_renews_on_every_touch_and_never_lapses() {
+    let env = Env::default();
+    let (contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let creator = Address::generate(&env);
+    client.register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &default_quotes(&env),
+        &default_payout_shares(&env),
+    );
+
+    let initial_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+    assert_ttl_renewed_to_max(initial_ttl);
+
+    // Advance well past the renewal threshold (half of max) without any
+    // call touching admin state.
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    // Any admin-touching call — here, a plain read — renews the instance
+    // TTL straight back to the max, demonstrating admin state cannot expire
+    // silently as long as the contract is used at all.
+    assert_eq!(client.get_upgrade_admin(), Some(creator));
+
+    let renewed_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+    assert_ttl_renewed_to_max(renewed_ttl);
+}
+
+#[test]
+fn material_ttl_renews_on_read_after_partial_lapse() {
+    let env = Env::default();
+    let (contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let creator = Address::generate(&env);
+    let material_id = client.register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &default_quotes(&env),
+        &default_payout_shares(&env),
+    );
+
+    let core_key = DataKey::MaterialCore(material_id.clone());
+    let sale_key = DataKey::MaterialSale(material_id.clone());
+
+    let initial_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&core_key));
+    assert_ttl_renewed_to_max(initial_ttl);
+
+    // Advance past the renewal threshold without reading the material.
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+    let lapsed_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&core_key));
+    assert!(lapsed_ttl <= 8_000 && lapsed_ttl >= 7_990, "expected TTL to have decayed to ~8_000, got {lapsed_ttl}");
+
+    // A plain read — the same lookup a buyer's purchase attempt performs —
+    // renews both halves of the record back to the max, with no special
+    // maintenance call required.
+    let record = client.get_material(&material_id);
+    assert_eq!(record.material_id, material_id);
+
+    let renewed_core_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&core_key));
+    let renewed_sale_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&sale_key));
+    assert_ttl_renewed_to_max(renewed_core_ttl);
+    assert_ttl_renewed_to_max(renewed_sale_ttl);
+}
+
+#[test]
+fn allowed_asset_ttl_renews_on_write() {
+    let env = Env::default();
+    let (contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let creator = Address::generate(&env);
+    client.register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &default_quotes(&env),
+        &default_payout_shares(&env),
+    );
+
+    let asset = Address::generate(&env);
+    client.set_asset_allowed(&creator, &asset, &AssetKind::Token, &true);
+
+    let asset_key = DataKey::AllowedAsset(asset.clone());
+    let initial_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_key));
+    assert_ttl_renewed_to_max(initial_ttl);
+
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    // Re-approving the same asset is a write, and renews its TTL.
+    client.set_asset_allowed(&creator, &asset, &AssetKind::Token, &true);
+    let renewed_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_key));
+    assert_ttl_renewed_to_max(renewed_ttl);
+}
+
+#[test]
+fn extend_materials_ttl_is_cursor_based_and_bounded() {
+    let env = Env::default();
+    let (contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    // First registration bootstraps the upgrade-admin and is exempt from
+    // allowlist enforcement; approve the asset used by the rest. `quotes`
+    // and `payout_shares` are captured once and reused for every
+    // registration below — `default_quotes`/`default_payout_shares`
+    // generate fresh random asset/recipient addresses on every call, so
+    // reusing the same values is what makes the single `set_asset_allowed`
+    // call below cover every registration in the loop.
+    let bootstrap_creator = Address::generate(&env);
+    let quotes = default_quotes(&env);
+    let payout_shares = default_payout_shares(&env);
+    client.register_material(
+        &bootstrap_creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &quotes,
+        &payout_shares,
+    );
+    // default_quotes() quotes two assets; every registration below reuses
+    // the same `quotes` value, so both must be approved.
+    for index in 0..quotes.len() {
+        client.set_asset_allowed(
+            &bootstrap_creator,
+            &quotes.get_unchecked(index).asset,
+            &AssetKind::Token,
+            &true,
+        );
+    }
+
+    // Register enough materials to exceed MAX_MAINTENANCE_BATCH (25) in a
+    // single sweep, proving the batch is bounded regardless of the caller's
+    // requested `limit`.
+    for i in 0..29u8 {
+        let creator = Address::generate(&env);
+        client.register_material(
+            &creator,
+            &metadata_uri(&env),
+            &bytes32(&env, 10u8.wrapping_add(i)),
+            &bytes32(&env, 200u8.wrapping_add(i)),
+            &quotes,
+            &payout_shares,
+        );
+    }
+    // 30 materials total (1 bootstrap + 29), 5 more than MAX_MAINTENANCE_BATCH.
+
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    // A caller-requested limit far above MAX_MAINTENANCE_BATCH is clamped —
+    // this single call, inside the test harness's default mainnet resource
+    // enforcement, proves the sweep cannot exceed transaction resource
+    // limits regardless of what's requested.
+    let next_cursor = client.extend_materials_ttl(&0, &10_000);
+    assert_eq!(next_cursor, 25, "batch should be clamped to MAX_MAINTENANCE_BATCH");
+
+    // Resuming from the returned cursor covers the remainder.
+    let final_cursor = client.extend_materials_ttl(&next_cursor, &10_000);
+    assert_eq!(final_cursor, 30);
+
+    // Every material's TTL was renewed by the two sweep calls, including
+    // ones registered long before the ledger advance.
+    let bootstrap_material_id = env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .get::<_, BytesN<32>>(&DataKey::MaterialIndex(0))
+            .unwrap()
+    });
+    let core_key = DataKey::MaterialCore(bootstrap_material_id);
+    let renewed_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&core_key));
+    assert_ttl_renewed_to_max(renewed_ttl);
+}
+
+#[test]
+fn extend_asset_policy_ttl_is_cursor_based() {
+    let env = Env::default();
+    let (contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+    set_short_ttl_window(&env);
+
+    let creator = Address::generate(&env);
+    client.register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 1),
+        &bytes32(&env, 2),
+        &default_quotes(&env),
+        &default_payout_shares(&env),
+    );
+
+    let asset_a = Address::generate(&env);
+    let asset_b = Address::generate(&env);
+    client.set_asset_allowed(&creator, &asset_a, &AssetKind::Token, &true);
+    client.set_asset_allowed(&creator, &asset_b, &AssetKind::Token, &true);
+
+    env.ledger().with_mut(|li| li.sequence_number += 12_000);
+
+    let cursor = client.extend_asset_policy_ttl(&0, &1);
+    assert_eq!(cursor, 1);
+    let final_cursor = client.extend_asset_policy_ttl(&cursor, &1);
+    assert_eq!(final_cursor, 2);
+
+    let asset_a_key = DataKey::AllowedAsset(asset_a);
+    let renewed_ttl =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_a_key));
+    assert_ttl_renewed_to_max(renewed_ttl);
 }

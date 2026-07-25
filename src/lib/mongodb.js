@@ -1,6 +1,7 @@
 // Resolves: Configure efficient MongoDB connection pooling in the Next.js API routes to handle concurrent requests.
 import { cpus } from "node:os";
 import { MongoClient } from "mongodb";
+import { REQUIRED_INDEXES } from "./backend/schemaContracts.js";
 
 const uri = process.env.MONGODB_URI;
 
@@ -111,7 +112,20 @@ async function ensureIndexes(db) {
       "[Database Index Error]: Failed to create MongoDB indexes:",
       error,
     );
+  for (const [collectionName, indexes] of Object.entries(REQUIRED_INDEXES)) {
+    const collection = db.collection(collectionName);
+    for (const { keys, options } of indexes) {
+      try {
+        await collection.createIndex(keys, options);
+      } catch (error) {
+        console.error(
+          `[Database Index Error]: Failed to create index on "${collectionName}" (${JSON.stringify(keys)}):`,
+          error,
+        );
+      }
+    }
   }
+  console.log("MongoDB indexes ensured successfully.");
 }
 
 export async function getDb() {

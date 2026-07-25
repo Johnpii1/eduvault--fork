@@ -1,5 +1,6 @@
 import { COLLECTIONS } from "../backend/schemaContracts.js";
 import { sendReceiptIfEligible } from "../email.js";
+import { parseContractEvent } from "./eventParser.js";
 
 
 function duplicateKey(error) {
@@ -129,8 +130,16 @@ export async function runIndexerBatch({ db, eventSource, source = "stellar", lim
   const maxRetries = Number(process.env.INDEXER_MAX_RETRIES || 3);
 
   for (const event of events) {
+    const parsedEvent = parseContractEvent(event);
+    if (!parsedEvent) {
+      // Unrecognized topic or undecodable payload (e.g. a future event type
+      // this indexer doesn't know about yet) — skip rather than fail the batch.
+      skipped += 1;
+      continue;
+    }
+
     try {
-      const result = await applyIndexedEvent(db, { ...event, source });
+      const result = await applyIndexedEvent(db, { ...parsedEvent, source });
       if (result.skipped) {
         skipped += 1;
         // If a dead-letter exists for this event, increment its retry count
