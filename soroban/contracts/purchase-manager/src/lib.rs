@@ -53,12 +53,17 @@ pub enum CreatorTier {
 }
 
 /// Classification of a Stellar asset accepted by the purchase manager.
+/// - `Native`           – XLM (the Stellar native asset, wrapped via its SAC).
+/// - `Token`            – Any SAC-wrapped token such as USDC or EURC.
+/// - `CreatorToken`     – A creator-specific SAC token (e.g., a course-access token minted by a creator).
+/// - `InstitutionAsset`  – Institution-issued access assets for granting bulk or targeted access.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AssetKind {
     Native = 0,
     Token = 1,
     CreatorToken = 2,
+    InstitutionAsset = 3,
 }
 
 /// Settlement state machine for a purchase.
@@ -1369,6 +1374,29 @@ impl PurchaseManager {
             extend_persistent_ttl(&env, &key);
         }
         info
+    }
+
+    /// Register a standard Stellar token for checkout (admin only).
+    /// This is a convenience function for registering tokens like USDC, EURC, etc.
+    pub fn register_token_asset(
+        env: Env,
+        admin: Address,
+        asset: Address,
+        enabled: bool,
+    ) -> Result<(), PurchaseError> {
+        Self::set_asset_allowed(&env, admin, asset, AssetKind::Token, enabled)
+    }
+
+    /// Register an institution-issued access asset (admin only).
+    /// Institution assets are custom tokens issued by educational institutions
+    /// to grant access to their content or materials at scale.
+    pub fn register_institution_asset(
+        env: Env,
+        admin: Address,
+        asset: Address,
+        enabled: bool,
+    ) -> Result<(), PurchaseError> {
+        Self::set_asset_allowed(&env, admin, asset, AssetKind::InstitutionAsset, enabled)
     }
 
     /// Configure the price-oracle address (admin only).

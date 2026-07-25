@@ -37,16 +37,18 @@ pub enum MaterialStatus {
 
 /// Classification of a Stellar asset supported by the registry.
 ///
-/// - `Native`      – XLM (the Stellar native asset, wrapped via its SAC).
-/// - `Token`       – Any SAC-wrapped token such as USDC or EURC.
-/// - `CreatorToken`– A creator-specific SAC token (e.g. a course-access token
-///                   minted by the content creator themselves).
+/// - `Native`           – XLM (the Stellar native asset, wrapped via its SAC).
+/// - `Token`            – Any SAC-wrapped token such as USDC or EURC.
+/// - `CreatorToken`     – A creator-specific SAC token (e.g., a course-access token
+///                        minted by the content creator themselves).
+/// - `InstitutionAsset`  – Institution-issued access assets for granting bulk or targeted access.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AssetKind {
     Native = 0,
     Token = 1,
     CreatorToken = 2,
+    InstitutionAsset = 3,
 }
 
 /// Metadata stored in the registry allowlist for each approved asset.
