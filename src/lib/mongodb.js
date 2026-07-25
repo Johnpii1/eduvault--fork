@@ -1,6 +1,7 @@
 // Resolves: Configure efficient MongoDB connection pooling in the Next.js API routes to handle concurrent requests.
 import { cpus } from "node:os";
 import { MongoClient } from "mongodb";
+import { REQUIRED_INDEXES } from "./backend/schemaContracts.js";
 
 const uri = process.env.MONGODB_URI;
 
@@ -69,34 +70,20 @@ function getClientPromise() {
 let indexesCreated = false;
 
 async function ensureIndexes(db) {
-  try {
-    const collection = db.collection("materials");
-
-    // Create compound index for category and price search optimization
-    await collection.createIndex(
-      { category: 1, price: 1 },
-      { name: "materials_category_price_idx", background: true },
-    );
-
-    // Create compound text index for title and description search
-    await collection.createIndex(
-      { title: "text", description: "text" },
-      { name: "materials_text_idx", background: true },
-    );
-
-    // Create compound index for title, description, price, and category
-    await collection.createIndex(
-      { category: 1, price: 1, title: 1, description: 1 },
-      { name: "materials_search_compound_idx", background: true },
-    );
-
-    console.log("MongoDB indexes ensured successfully.");
-  } catch (error) {
-    console.error(
-      "[Database Index Error]: Failed to create MongoDB indexes:",
-      error,
-    );
+  for (const [collectionName, indexes] of Object.entries(REQUIRED_INDEXES)) {
+    const collection = db.collection(collectionName);
+    for (const { keys, options } of indexes) {
+      try {
+        await collection.createIndex(keys, options);
+      } catch (error) {
+        console.error(
+          `[Database Index Error]: Failed to create index on "${collectionName}" (${JSON.stringify(keys)}):`,
+          error,
+        );
+      }
+    }
   }
+  console.log("MongoDB indexes ensured successfully.");
 }
 
 export async function getDb() {

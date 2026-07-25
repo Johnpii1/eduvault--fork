@@ -71,12 +71,40 @@ pub struct MaterialRecord {
     pub updated_ledger: u32,
 }
 
+/// Write-once fields for a material, stored separately from the mutable sale
+/// state so that sale-term/status updates don't re-write immutable data
+/// (creator, metadata, hashes) on every call. `material_id` is intentionally
+/// omitted here since it's already the `DataKey::MaterialCore` storage key.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MaterialCore {
+    creator: Address,
+    metadata_uri: String,
+    metadata_hash: BytesN<32>,
+    rights_hash: BytesN<32>,
+    created_ledger: u32,
+}
+
+/// Mutable sale-state fields for a material, rewritten on every sale-terms or
+/// status update. Kept in its own storage entry so those writes only pay for
+/// the bytes that actually change.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MaterialSaleState {
+    paused: bool,
+    status: MaterialStatus,
+    quotes: Vec<AssetQuote>,
+    payout_shares: Vec<PayoutShare>,
+    updated_ledger: u32,
+}
+
 #[contracttype]
 #[derive(Clone)]
 enum DataKey {
     UpgradeAdmin,
     CreatorNonce(Address),
-    Material(BytesN<32>),
+    MaterialCore(BytesN<32>),
+    MaterialSale(BytesN<32>),
     AllowedAsset(Address),
 }
 
@@ -191,20 +219,22 @@ impl MaterialRegistry {
         }
 
         let current_ledger = env.ledger().sequence();
-        let record = MaterialRecord {
-            material_id: material_id.clone(),
+        let core = MaterialCore {
             creator: creator.clone(),
             metadata_uri: metadata_uri.clone(),
             metadata_hash: metadata_hash.clone(),
             rights_hash: rights_hash.clone(),
+            created_ledger: current_ledger,
+        };
+        let sale_state = MaterialSaleState {
             paused: false,
             status: MaterialStatus::Active,
             quotes: quotes.clone(),
             payout_shares: payout_shares.clone(),
-            created_ledger: current_ledger,
             updated_ledger: current_ledger,
         };
-        put_material(&env, &record);
+        put_material_core(&env, &material_id, &core);
+        put_material_sale(&env, &material_id, &sale_state);
         set_creator_nonce(&env, &creator, next_nonce + 1);
 
         MaterialRegisteredEvent {
@@ -238,7 +268,7 @@ impl MaterialRegistry {
         record.payout_shares = payout_shares.clone();
         record.updated_ledger = env.ledger().sequence();
 
-        put_material(&env, &record);
+        put_material_sale(&env, &material_id, &sale_state_from_record(&record));
 
         MaterialSaleTermsUpdatedEvent {
             material_id,
@@ -268,7 +298,7 @@ impl MaterialRegistry {
         record.status = status;
         record.paused = status == MaterialStatus::Paused;
         record.updated_ledger = env.ledger().sequence();
-        put_material(&env, &record);
+        put_material_sale(&env, &material_id, &sale_state_from_record(&record));
 
         MaterialStatusUpdatedEvent {
             material_id: material_id.clone(),
@@ -345,7 +375,7 @@ impl MaterialRegistry {
         }
         record.status = next_status;
         record.updated_ledger = env.ledger().sequence();
-        put_material(&env, &record);
+        put_material_sale(&env, &material_id, &sale_state_from_record(&record));
         MaterialStatusChangedEvent {
             material_id: material_id.clone(),
             creator: record.creator.clone(),
@@ -561,23 +591,61 @@ fn set_creator_nonce(env: &Env, creator: &Address, nonce: u64) {
 fn has_material(env: &Env, material_id: &BytesN<32>) -> bool {
     env.storage()
         .persistent()
-        .has(&DataKey::Material(material_id.clone()))
+        .has(&DataKey::MaterialCore(material_id.clone()))
 }
 
+/// Reassembles the public `MaterialRecord` from its two on-ledger parts.
+/// `material_id` is attached from the lookup key rather than being stored.
 fn get_material_record(
     env: &Env,
     material_id: &BytesN<32>,
 ) -> Result<MaterialRecord, RegistryError> {
-    env.storage()
+    let core: MaterialCore = env
+        .storage()
         .persistent()
-        .get(&DataKey::Material(material_id.clone()))
-        .ok_or(RegistryError::MaterialNotFound)
+        .get(&DataKey::MaterialCore(material_id.clone()))
+        .ok_or(RegistryError::MaterialNotFound)?;
+    let sale: MaterialSaleState = env
+        .storage()
+        .persistent()
+        .get(&DataKey::MaterialSale(material_id.clone()))
+        .ok_or(RegistryError::MaterialNotFound)?;
+
+    Ok(MaterialRecord {
+        material_id: material_id.clone(),
+        creator: core.creator,
+        metadata_uri: core.metadata_uri,
+        metadata_hash: core.metadata_hash,
+        rights_hash: core.rights_hash,
+        paused: sale.paused,
+        status: sale.status,
+        quotes: sale.quotes,
+        payout_shares: sale.payout_shares,
+        created_ledger: core.created_ledger,
+        updated_ledger: sale.updated_ledger,
+    })
 }
 
-fn put_material(env: &Env, record: &MaterialRecord) {
+fn sale_state_from_record(record: &MaterialRecord) -> MaterialSaleState {
+    MaterialSaleState {
+        paused: record.paused,
+        status: record.status,
+        quotes: record.quotes.clone(),
+        payout_shares: record.payout_shares.clone(),
+        updated_ledger: record.updated_ledger,
+    }
+}
+
+fn put_material_core(env: &Env, material_id: &BytesN<32>, core: &MaterialCore) {
     env.storage()
         .persistent()
-        .set(&DataKey::Material(record.material_id.clone()), record);
+        .set(&DataKey::MaterialCore(material_id.clone()), core);
+}
+
+fn put_material_sale(env: &Env, material_id: &BytesN<32>, sale: &MaterialSaleState) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::MaterialSale(material_id.clone()), sale);
 }
 
 fn initialize_upgrade_admin_if_missing(env: &Env, admin: &Address) {
