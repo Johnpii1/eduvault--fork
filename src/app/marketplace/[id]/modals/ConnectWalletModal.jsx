@@ -68,12 +68,13 @@ export default function ConnectWalletModal({ isOpen, onClose }) {
             initial={{ opacity: 0, scale: 0.9, y: 50 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 50 }}
-            className="fixed inset-0 flex items-center justify-center z-50"
+            className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto p-0 sm:items-center sm:p-4"
           >
-            <div className="bg-white rounded-2xl shadow-lg w-[90%] max-w-sm p-6 relative">
+            <div className="relative max-h-[90vh] w-full overflow-y-auto rounded-t-2xl bg-white p-6 shadow-lg sm:max-w-sm sm:rounded-2xl">
               <button
                 onClick={onClose}
-                className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
+                aria-label="Close wallet connection dialog"
+                className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 p-2 -m-2"
               >
                 <FaTimes />
               </button>
@@ -92,7 +93,7 @@ export default function ConnectWalletModal({ isOpen, onClose }) {
                   <button
                     key={i}
                     onClick={wallet.onClick}
-                    className="flex justify-between items-center w-full border border-gray-200 hover:border-blue-500 hover:bg-blue-50 transition-all rounded-lg py-2.5 px-4"
+                    className="flex justify-between items-center w-full border border-gray-200 hover:border-blue-500 hover:bg-blue-50 transition-all rounded-lg py-3 px-4 min-h-[48px]"
                   >
                     <div className="flex items-center gap-3">
                       <Image

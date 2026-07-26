@@ -270,9 +270,9 @@ export default function BuyNowModal({
               initial={{ opacity: 0, scale: 0.92, y: 50 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.92, y: 50 }}
-              className="fixed inset-0 z-50 flex items-center justify-center p-4"
+              className="fixed inset-0 z-50 flex items-end justify-center overflow-y-auto p-0 sm:items-center sm:p-4"
             >
-              <div className="relative w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl">
+              <div className="relative max-h-[92vh] w-full overflow-y-auto rounded-t-3xl border border-slate-200 bg-white p-5 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6">
                 <button
                   type="button"
                   onClick={handleClose}
@@ -282,11 +282,11 @@ export default function BuyNowModal({
                   <FaTimes />
                 </button>
 
-                <div className="mb-6">
+                <div className="mb-6 pr-8">
                   <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
                     Access request
                   </p>
-                  <h2 className="mt-1 text-2xl font-bold text-slate-900">Complete payment to unlock</h2>
+                  <h2 className="mt-1 text-xl font-bold text-slate-900 sm:text-2xl">Complete payment to unlock</h2>
                   <p className="mt-2 text-sm text-slate-600">
                     We will create a pending access request first. The material unlocks only after payment is confirmed.
                   </p>
