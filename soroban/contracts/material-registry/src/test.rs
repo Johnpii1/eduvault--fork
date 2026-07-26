@@ -819,7 +819,7 @@ fn set_short_ttl_window(env: &Env) {
 /// a small tolerance rather than asserting an exact figure.
 fn assert_ttl_renewed_to_max(ttl: u32) {
     assert!(
-        ttl <= 20_000 && ttl >= 19_990,
+        (19_990..=20_000).contains(&ttl),
         "expected TTL near the 20_000 max, got {ttl}"
     );
 }
@@ -888,7 +888,7 @@ fn material_ttl_renews_on_read_after_partial_lapse() {
         env.storage().persistent().get_ttl(&core_key)
     });
     assert!(
-        lapsed_ttl <= 8_000 && lapsed_ttl >= 7_990,
+        (7_990..=8_000).contains(&lapsed_ttl),
         "expected TTL to have decayed to ~8_000, got {lapsed_ttl}"
     );
 

@@ -20,6 +20,11 @@ const DISPUTE_WINDOW_LEDGERS: u32 = 30_000;
 /// budget must account for ~2*N writes plus N+1 token transfers.
 const MAX_BULK_LICENSE_RECIPIENTS: u32 = 50;
 
+/// Maximum number of active scholarship grants a single learner may hold
+/// simultaneously. Keeps bounded iteration during redemption within
+/// Soroban resource limits.
+const MAX_ACTIVE_SCHOLARSHIP_GRANTS: u32 = 50;
+
 /// TTL renewal policy (#464): whenever a tracked entry's remaining TTL drops
 /// below half of the network's configured maximum, extend it back out to
 /// the maximum. See ../../docs/ttl-operations.md for the operational
@@ -215,6 +220,47 @@ pub struct BulkLicensePurchaseResult {
     pub first_purchase_id: u64,
 }
 
+// ============== Scholarship Credit Types ==============
+
+/// A single scholarship credit grant issued to a learner by an authorized
+/// issuer. Each grant tracks its own remaining balance, issuance metadata,
+/// and optional expiry so that credits can be consumed deterministically
+/// (earliest-expiry-first) and audited after revocation.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScholarshipCreditGrant {
+    pub grant_id: u64,
+    pub learner: Address,
+    pub issuer: Address,
+    pub total_credits: i128,
+    pub remaining_credits: i128,
+    pub issued_at: u32,
+    pub expires_at: Option<u32>,
+    pub active: bool,
+}
+
+/// Record of a scholarship credit redemption against a specific material.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScholarshipRedemptionRecord {
+    pub redemption_id: u64,
+    pub learner: Address,
+    pub material_id: BytesN<32>,
+    pub credits_used: i128,
+    pub redeemed_at: u32,
+}
+
+/// Structured result returned by a successful scholarship redemption.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScholarshipRedemptionResult {
+    pub redemption_id: u64,
+    pub material_id: BytesN<32>,
+    pub learner: Address,
+    pub credits_used: i128,
+    pub remaining_credits: i128,
+}
+
 /// Data keys for contract storage
 #[contracttype]
 #[derive(Clone)]
@@ -251,6 +297,28 @@ enum DataKey {
     /// maintenance counter is defined in one place; the index entries
     /// themselves stay in `auth`'s own storage namespace.
     AdminRoleIndexCount,
+
+    // ============== Scholarship Credit Storage ==============
+    /// Monotonic nonce for generating unique scholarship grant IDs.
+    ScholarshipGrantNonce,
+    /// Monotonic nonce for generating unique scholarship redemption IDs.
+    ScholarshipRedemptionNonce,
+    /// Individual grant record: `ScholarshipGrant(u64)` -> `ScholarshipCreditGrant`
+    ScholarshipGrant(u64),
+    /// Aggregate spendable credit balance for a learner.
+    ScholarshipBalance(Address),
+    /// Per-material scholarship credit cost: `ScholarshipCreditCost(material_id)` -> `i128`
+    ScholarshipCreditCost(BytesN<32>),
+    /// Redemption record keyed by (learner, material_id) for duplicate prevention.
+    ScholarshipRedemption((Address, BytesN<32>)),
+    /// List of active grant IDs belonging to a learner.
+    ScholarshipGrantsForLearner(Address),
+    /// Whether a given address is an authorized scholarship issuer.
+    ScholarshipIssuer(Address),
+    /// Maintenance index: sequential slot -> issuer address.
+    ScholarshipIssuerIndex(u64),
+    /// Instance storage: total ScholarshipIssuerIndex slots populated.
+    ScholarshipIssuerIndexCount,
 }
 
 /// Contract errors
@@ -306,6 +374,19 @@ pub enum PurchaseError {
     TooManyRecipients = 81,
     DuplicateRecipient = 82,
     ArithmeticOverflow = 83,
+
+    // Scholarship credit errors
+    InvalidCreditAmount = 90,
+    InvalidCreditCost = 91,
+    InsufficientScholarshipCredits = 92,
+    ScholarshipGrantNotFound = 93,
+    ScholarshipGrantExpired = 94,
+    ScholarshipGrantInactive = 95,
+    GrantAlreadyProcessed = 96,
+    ContentNotScholarshipEligible = 97,
+    RedemptionAlreadyExists = 98,
+    InvalidExpiry = 99,
+    TooManyActiveGrants = 100,
 }
 
 /// Event: purchase.completed
@@ -465,6 +546,65 @@ pub struct BulkPurchaseCompletedEvent {
     pub unit_price: i128,
     pub total_paid: i128,
     pub asset: Address,
+}
+
+// ============== Scholarship Credit Events ==============
+
+/// Event: scholarship.credits_issued
+#[contractevent(topics = ["scholarship", "credits_issued"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScholarshipCreditsIssuedEvent {
+    #[topic]
+    pub grant_id: u64,
+    #[topic]
+    pub learner: Address,
+    pub issuer: Address,
+    pub amount: i128,
+    pub expires_at: Option<u32>,
+}
+
+/// Event: scholarship.credits_redeemed
+#[contractevent(topics = ["scholarship", "credits_redeemed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScholarshipCreditsRedeemedEvent {
+    #[topic]
+    pub redemption_id: u64,
+    #[topic]
+    pub learner: Address,
+    #[topic]
+    pub material_id: BytesN<32>,
+    pub credits_used: i128,
+    pub remaining_credits: i128,
+}
+
+/// Event: scholarship.grant_revoked
+#[contractevent(topics = ["scholarship", "grant_revoked"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScholarshipGrantRevokedEvent {
+    #[topic]
+    pub grant_id: u64,
+    #[topic]
+    pub learner: Address,
+    pub issuer: Address,
+    pub credits_revoked: i128,
+}
+
+/// Event: scholarship.cost_updated
+#[contractevent(topics = ["scholarship", "cost_updated"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScholarshipCostUpdatedEvent {
+    #[topic]
+    pub material_id: BytesN<32>,
+    pub credit_cost: i128,
+}
+
+/// Event: scholarship.issuer_updated
+#[contractevent(topics = ["scholarship", "issuer_updated"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScholarshipIssuerUpdatedEvent {
+    #[topic]
+    pub issuer: Address,
+    pub enabled: bool,
 }
 
 /// The PurchaseManager contract
@@ -2019,6 +2159,402 @@ impl PurchaseManager {
     pub fn extend_admin_role_ttl(env: Env, cursor: u64, limit: u32) -> u64 {
         auth::extend_admin_role_ttl(&env, cursor, limit)
     }
+
+    // ============== Scholarship Credit Management ==============
+
+    /// Authorize or revoke a scholarship issuer address.
+    ///
+    /// Only an admin may call this. Authorized issuers can then distribute
+    /// scholarship credits to learners.
+    pub fn set_scholarship_issuer(
+        env: Env,
+        admin: Address,
+        issuer: Address,
+        enabled: bool,
+    ) -> Result<(), PurchaseError> {
+        auth::require_admin(&env, &admin)?;
+
+        let key = DataKey::ScholarshipIssuer(issuer.clone());
+        let is_new = !env.storage().persistent().has(&key);
+        env.storage().persistent().set(&key, &enabled);
+        extend_persistent_ttl(&env, &key);
+
+        if is_new && enabled {
+            index_scholarship_issuer(&env, &issuer);
+        }
+
+        ScholarshipIssuerUpdatedEvent { issuer, enabled }.publish(&env);
+        Ok(())
+    }
+
+    /// Check if an address is an authorized scholarship issuer.
+    pub fn is_scholarship_issuer(env: Env, issuer: Address) -> bool {
+        let key = DataKey::ScholarshipIssuer(issuer);
+        let has = env.storage().persistent().has(&key);
+        if has {
+            extend_persistent_ttl(&env, &key);
+        }
+        has && env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&key)
+            .unwrap_or(false)
+    }
+
+    /// Configure the scholarship-credit cost for a material.
+    ///
+    /// Only admin may set the credit cost. The material must already exist
+    /// in the registry. A cost of zero or negative is rejected.
+    pub fn set_scholarship_credit_cost(
+        env: Env,
+        admin: Address,
+        material_id: BytesN<32>,
+        credit_cost: i128,
+    ) -> Result<(), PurchaseError> {
+        auth::require_admin(&env, &admin)?;
+
+        if credit_cost <= 0 {
+            return Err(PurchaseError::InvalidCreditCost);
+        }
+
+        let config = get_platform_config(&env)?;
+        let _material: MaterialRecord = config
+            .registry
+            .get_material(&env, &material_id)
+            .map_err(|_| PurchaseError::MaterialNotFound)?;
+
+        let key = DataKey::ScholarshipCreditCost(material_id.clone());
+        env.storage().persistent().set(&key, &credit_cost);
+        extend_persistent_ttl(&env, &key);
+
+        ScholarshipCostUpdatedEvent {
+            material_id,
+            credit_cost,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Get the scholarship-credit cost for a material, if configured.
+    pub fn get_scholarship_credit_cost(env: Env, material_id: BytesN<32>) -> Option<i128> {
+        let key = DataKey::ScholarshipCreditCost(material_id);
+        let cost: Option<i128> = env.storage().persistent().get(&key);
+        if cost.is_some() {
+            extend_persistent_ttl(&env, &key);
+        }
+        cost
+    }
+
+    /// Issue scholarship credits to a learner.
+    ///
+    /// The issuer must be authorized via `set_scholarship_issuer`. Credits
+    /// are tracked per-grant with optional expiry. The learner's aggregate
+    /// balance is updated atomically. Returns the new grant ID.
+    pub fn issue_scholarship_credits(
+        env: Env,
+        issuer: Address,
+        learner: Address,
+        amount: i128,
+        expires_at: Option<u32>,
+    ) -> Result<u64, PurchaseError> {
+        issuer.require_auth();
+
+        if !is_scholarship_issuer_internal(&env, &issuer) {
+            return Err(PurchaseError::NotAuthorized);
+        }
+
+        if amount <= 0 {
+            return Err(PurchaseError::InvalidCreditAmount);
+        }
+
+        let current_ledger = env.ledger().sequence();
+
+        if let Some(expiry) = expires_at {
+            if expiry <= current_ledger {
+                return Err(PurchaseError::InvalidExpiry);
+            }
+        }
+
+        let grant_id = get_and_increment_scholarship_grant_nonce(&env)?;
+
+        let grant = ScholarshipCreditGrant {
+            grant_id,
+            learner: learner.clone(),
+            issuer: issuer.clone(),
+            total_credits: amount,
+            remaining_credits: amount,
+            issued_at: current_ledger,
+            expires_at,
+            active: true,
+        };
+
+        let grant_key = DataKey::ScholarshipGrant(grant_id);
+        env.storage().persistent().set(&grant_key, &grant);
+        extend_persistent_ttl(&env, &grant_key);
+
+        // Add grant_id to learner's grant list
+        add_grant_to_learner(&env, &learner, grant_id)?;
+
+        // Update aggregate balance
+        increment_learner_balance(&env, &learner, amount)?;
+
+        ScholarshipCreditsIssuedEvent {
+            grant_id,
+            learner,
+            issuer,
+            amount,
+            expires_at,
+        }
+        .publish(&env);
+
+        Ok(grant_id)
+    }
+
+    /// Get the available (spendable) scholarship credit balance for a learner.
+    ///
+    /// Excludes credits from expired, revoked, or fully-consumed grants.
+    pub fn get_scholarship_credit_balance(env: Env, learner: Address) -> i128 {
+        compute_scholarship_balance(&env, &learner)
+    }
+
+    /// Get a specific scholarship grant by ID.
+    pub fn get_scholarship_grant(
+        env: Env,
+        grant_id: u64,
+    ) -> Result<ScholarshipCreditGrant, PurchaseError> {
+        let key = DataKey::ScholarshipGrant(grant_id);
+        let grant: Option<ScholarshipCreditGrant> = env.storage().persistent().get(&key);
+        if grant.is_some() {
+            extend_persistent_ttl(&env, &key);
+        }
+        grant.ok_or(PurchaseError::ScholarshipGrantNotFound)
+    }
+
+    /// Redeem scholarship credits for a material.
+    ///
+    /// - Learner must authorize
+    /// - Material must be active in the registry
+    /// - Material must have a configured scholarship credit cost
+    /// - Learner must not already have an entitlement for the material
+    /// - Learner must have sufficient available credits
+    /// - Credits are consumed earliest-expiry-first
+    /// - A standard entitlement is granted upon successful redemption
+    /// - The operation is atomic
+    pub fn redeem_scholarship_credits(
+        env: Env,
+        learner: Address,
+        material_id: BytesN<32>,
+    ) -> Result<ScholarshipRedemptionResult, PurchaseError> {
+        learner.require_auth();
+
+        // Check no existing redemption for this (learner, material) pair
+        let redemption_key = DataKey::ScholarshipRedemption((learner.clone(), material_id.clone()));
+        if env.storage().persistent().has(&redemption_key) {
+            return Err(PurchaseError::RedemptionAlreadyExists);
+        }
+
+        // Check the learner does not already have an entitlement
+        if has_entitlement_internal(&env, &material_id, &learner) {
+            return Err(PurchaseError::EntitlementAlreadyExists);
+        }
+
+        // Check material exists, is active, and is scholarship eligible
+        let config = get_platform_config(&env)?;
+        let material: MaterialRecord = config
+            .registry
+            .get_material(&env, &material_id)
+            .map_err(|_| PurchaseError::MaterialNotFound)?;
+
+        if material.status != MaterialStatus::Active || material.paused {
+            return Err(PurchaseError::MaterialNotActive);
+        }
+
+        let credit_cost_key = DataKey::ScholarshipCreditCost(material_id.clone());
+        let credit_cost: i128 = env
+            .storage()
+            .persistent()
+            .get(&credit_cost_key)
+            .ok_or(PurchaseError::ContentNotScholarshipEligible)?;
+        extend_persistent_ttl(&env, &credit_cost_key);
+
+        if credit_cost <= 0 {
+            return Err(PurchaseError::ContentNotScholarshipEligible);
+        }
+
+        // Compute available balance
+        let available = compute_scholarship_balance(&env, &learner);
+        if available < credit_cost {
+            return Err(PurchaseError::InsufficientScholarshipCredits);
+        }
+
+        // Consume credits from grants (earliest-expiry-first)
+        let _credits_consumed = consume_scholarship_credits(&env, &learner, credit_cost)?;
+
+        // Grant entitlement using the existing system
+        let purchase_id = get_and_increment_purchase_nonce(&env)?;
+        let current_ledger = env.ledger().sequence();
+
+        let entitlement = EntitlementRecord {
+            material_id: material_id.clone(),
+            buyer: learner.clone(),
+            active: true,
+            purchase_id,
+            asset: env.current_contract_address(),
+            amount: 0,
+            granted_ledger: current_ledger,
+        };
+        set_entitlement(&env, &entitlement);
+        index_purchase(&env, purchase_id, &material_id, &learner);
+
+        // Initialize settlement in Pending state (no escrow for scholarship)
+        let settlement = SettlementRecord {
+            purchase_id,
+            state: SettlementState::Pending,
+            disputed_ledger: None,
+            resolved_ledger: None,
+            refunded_amount: 0,
+        };
+        set_settlement_record(&env, purchase_id, &settlement);
+
+        // Store purchase -> buyer mapping
+        env.storage()
+            .persistent()
+            .set(&DataKey::PurchaseBuyer(purchase_id), &learner);
+
+        // Record redemption
+        let redemption_id = get_and_increment_scholarship_redemption_nonce(&env)?;
+        let redemption = ScholarshipRedemptionRecord {
+            redemption_id,
+            learner: learner.clone(),
+            material_id: material_id.clone(),
+            credits_used: credit_cost,
+            redeemed_at: current_ledger,
+        };
+        env.storage().persistent().set(&redemption_key, &redemption);
+        extend_persistent_ttl(&env, &redemption_key);
+
+        let remaining = compute_scholarship_balance(&env, &learner);
+
+        ScholarshipCreditsRedeemedEvent {
+            redemption_id,
+            learner: learner.clone(),
+            material_id: material_id.clone(),
+            credits_used: credit_cost,
+            remaining_credits: remaining,
+        }
+        .publish(&env);
+
+        Ok(ScholarshipRedemptionResult {
+            redemption_id,
+            material_id,
+            learner,
+            credits_used: credit_cost,
+            remaining_credits: remaining,
+        })
+    }
+
+    /// Get a scholarship redemption record by learner and material.
+    pub fn get_scholarship_redemption(
+        env: Env,
+        learner: Address,
+        material_id: BytesN<32>,
+    ) -> Option<ScholarshipRedemptionRecord> {
+        let key = DataKey::ScholarshipRedemption((learner, material_id));
+        let record: Option<ScholarshipRedemptionRecord> = env.storage().persistent().get(&key);
+        if record.is_some() {
+            extend_persistent_ttl(&env, &key);
+        }
+        record
+    }
+
+    /// Revoke unused credits from a scholarship grant.
+    ///
+    /// Only the original issuer or a platform admin may revoke. Already
+    /// redeemed credits and their entitlements remain valid. Returns the
+    /// number of credits revoked.
+    pub fn revoke_scholarship_grant(
+        env: Env,
+        caller: Address,
+        grant_id: u64,
+    ) -> Result<i128, PurchaseError> {
+        caller.require_auth();
+
+        let key = DataKey::ScholarshipGrant(grant_id);
+        let mut grant: ScholarshipCreditGrant = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(PurchaseError::ScholarshipGrantNotFound)?;
+
+        // Only the original issuer or an admin may revoke
+        let is_issuer = grant.issuer == caller;
+        let is_admin = auth::has_admin_role(&env, &caller);
+        if !is_issuer && !is_admin {
+            return Err(PurchaseError::NotAuthorized);
+        }
+
+        if !grant.active {
+            return Err(PurchaseError::ScholarshipGrantInactive);
+        }
+
+        let credits_to_revoke = grant.remaining_credits;
+        if credits_to_revoke <= 0 {
+            return Err(PurchaseError::ScholarshipGrantInactive);
+        }
+
+        grant.remaining_credits = 0;
+        grant.active = false;
+        env.storage().persistent().set(&key, &grant);
+        extend_persistent_ttl(&env, &key);
+
+        // Decrease learner's aggregate balance
+        decrement_learner_balance(&env, &grant.learner, credits_to_revoke);
+
+        // Remove from learner's active grant list
+        remove_grant_from_learner(&env, &grant.learner, grant_id);
+
+        ScholarshipGrantRevokedEvent {
+            grant_id,
+            learner: grant.learner,
+            issuer: grant.issuer,
+            credits_revoked: credits_to_revoke,
+        }
+        .publish(&env);
+
+        Ok(credits_to_revoke)
+    }
+
+    // ============== Scholarship TTL Maintenance ==============
+
+    /// Bump the TTL of up to `limit` scholarship issuers, starting at
+    /// `cursor`. Same cursor-based, permissionless semantics as the other
+    /// maintenance entrypoints.
+    pub fn extend_scholarship_issuer_ttl(env: Env, cursor: u64, limit: u32) -> u64 {
+        let limit = (limit.min(MAX_MAINTENANCE_BATCH)) as u64;
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ScholarshipIssuerIndexCount)
+            .unwrap_or(0);
+        extend_instance_ttl(&env);
+
+        let end = cursor.saturating_add(limit).min(count);
+        let mut i = cursor;
+        while i < end {
+            let index_key = DataKey::ScholarshipIssuerIndex(i);
+            if let Some(issuer) = env.storage().persistent().get::<_, Address>(&index_key) {
+                extend_persistent_ttl(&env, &index_key);
+                let issuer_key = DataKey::ScholarshipIssuer(issuer);
+                if env.storage().persistent().has(&issuer_key) {
+                    extend_persistent_ttl(&env, &issuer_key);
+                }
+            }
+            i += 1;
+        }
+
+        end
+    }
 }
 
 // ============== TTL Renewal (#464) ==============
@@ -2323,6 +2859,259 @@ fn distribute_payout_shares_from_contract(
     }
 
     Ok(())
+}
+
+// ============== Scholarship Credit Internals ==============
+
+fn is_scholarship_issuer_internal(env: &Env, issuer: &Address) -> bool {
+    let key = DataKey::ScholarshipIssuer(issuer.clone());
+    let has = env.storage().persistent().has(&key);
+    if has {
+        extend_persistent_ttl(env, &key);
+    }
+    has && env
+        .storage()
+        .persistent()
+        .get::<_, bool>(&key)
+        .unwrap_or(false)
+}
+
+fn get_and_increment_scholarship_grant_nonce(env: &Env) -> Result<u64, PurchaseError> {
+    let nonce: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::ScholarshipGrantNonce)
+        .unwrap_or(0);
+    env.storage()
+        .instance()
+        .set(&DataKey::ScholarshipGrantNonce, &(nonce + 1));
+    extend_instance_ttl(env);
+    Ok(nonce)
+}
+
+fn get_and_increment_scholarship_redemption_nonce(env: &Env) -> Result<u64, PurchaseError> {
+    let nonce: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::ScholarshipRedemptionNonce)
+        .unwrap_or(0);
+    env.storage()
+        .instance()
+        .set(&DataKey::ScholarshipRedemptionNonce, &(nonce + 1));
+    extend_instance_ttl(env);
+    Ok(nonce)
+}
+
+fn get_learner_grant_ids(env: &Env, learner: &Address) -> soroban_sdk::Vec<u64> {
+    let key = DataKey::ScholarshipGrantsForLearner(learner.clone());
+    let ids: soroban_sdk::Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(soroban_sdk::Vec::new(env));
+    if !env.storage().persistent().has(&key) {
+        // no-op, already returned empty
+    } else {
+        extend_persistent_ttl(env, &key);
+    }
+    ids
+}
+
+fn set_learner_grant_ids(env: &Env, learner: &Address, ids: &soroban_sdk::Vec<u64>) {
+    let key = DataKey::ScholarshipGrantsForLearner(learner.clone());
+    env.storage().persistent().set(&key, ids);
+    extend_persistent_ttl(env, &key);
+}
+
+fn add_grant_to_learner(env: &Env, learner: &Address, grant_id: u64) -> Result<(), PurchaseError> {
+    let mut ids = get_learner_grant_ids(env, learner);
+    if ids.len() >= MAX_ACTIVE_SCHOLARSHIP_GRANTS {
+        return Err(PurchaseError::TooManyActiveGrants);
+    }
+    ids.push_back(grant_id);
+    set_learner_grant_ids(env, learner, &ids);
+    Ok(())
+}
+
+fn remove_grant_from_learner(env: &Env, learner: &Address, grant_id: u64) {
+    let ids = get_learner_grant_ids(env, learner);
+    let mut new_ids = soroban_sdk::Vec::new(env);
+    let mut i = 0u32;
+    while i < ids.len() {
+        let id = ids.get_unchecked(i);
+        if id != grant_id {
+            new_ids.push_back(id);
+        }
+        i += 1;
+    }
+    set_learner_grant_ids(env, learner, &new_ids);
+}
+
+fn increment_learner_balance(
+    env: &Env,
+    learner: &Address,
+    amount: i128,
+) -> Result<(), PurchaseError> {
+    let key = DataKey::ScholarshipBalance(learner.clone());
+    let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    let new_balance = current
+        .checked_add(amount)
+        .ok_or(PurchaseError::ArithmeticOverflow)?;
+    env.storage().persistent().set(&key, &new_balance);
+    extend_persistent_ttl(env, &key);
+    Ok(())
+}
+
+fn decrement_learner_balance(env: &Env, learner: &Address, amount: i128) {
+    let key = DataKey::ScholarshipBalance(learner.clone());
+    let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    let new_balance = current.saturating_sub(amount);
+    env.storage().persistent().set(&key, &new_balance);
+    extend_persistent_ttl(env, &key);
+}
+
+/// Compute the actual spendable balance for a learner by iterating their
+/// active grants and summing remaining credits from non-expired grants.
+/// This is the authoritative balance — the stored aggregate may include
+/// credits from grants that have since expired.
+fn compute_scholarship_balance(env: &Env, learner: &Address) -> i128 {
+    let ids = get_learner_grant_ids(env, learner);
+    let current_ledger = env.ledger().sequence();
+    let mut total: i128 = 0;
+    let mut i = 0u32;
+    while i < ids.len() {
+        let grant_id = ids.get_unchecked(i);
+        let key = DataKey::ScholarshipGrant(grant_id);
+        if let Some(grant) = env
+            .storage()
+            .persistent()
+            .get::<_, ScholarshipCreditGrant>(&key)
+        {
+            extend_persistent_ttl(env, &key);
+            if grant.active && grant.remaining_credits > 0 {
+                // Check expiry
+                let is_expired = grant
+                    .expires_at
+                    .map(|exp| exp <= current_ledger)
+                    .unwrap_or(false);
+                if !is_expired {
+                    total = total
+                        .checked_add(grant.remaining_credits)
+                        .unwrap_or(i128::MAX);
+                }
+            }
+        }
+        i += 1;
+    }
+    total
+}
+
+/// Consume `required` credits from a learner's grants using
+/// earliest-expiry-first policy. Only consumes from active, non-expired
+/// grants. Returns the total credits consumed.
+fn consume_scholarship_credits(
+    env: &Env,
+    learner: &Address,
+    required: i128,
+) -> Result<i128, PurchaseError> {
+    let ids = get_learner_grant_ids(env, learner);
+    let current_ledger = env.ledger().sequence();
+    let mut remaining_to_consume = required;
+    let mut total_consumed: i128 = 0;
+
+    // Consume credits using earliest-expiry-first policy.
+    // Each iteration picks the active grant with the earliest expiry
+    // that still has spendable credits. Bounded by MAX_ACTIVE_SCHOLARSHIP_GRANTS.
+    while remaining_to_consume > 0 {
+        let mut best_idx: Option<u32> = None;
+        let mut best_expiry: Option<u32> = None;
+        let mut i = 0u32;
+
+        while i < ids.len() {
+            let grant_id = ids.get_unchecked(i);
+            let key = DataKey::ScholarshipGrant(grant_id);
+            if let Some(grant) = env
+                .storage()
+                .persistent()
+                .get::<_, ScholarshipCreditGrant>(&key)
+            {
+                if grant.active && grant.remaining_credits > 0 {
+                    let is_expired = grant
+                        .expires_at
+                        .map(|exp| exp <= current_ledger)
+                        .unwrap_or(false);
+                    if !is_expired {
+                        // Pick earliest expiry (None = non-expiring, treated as "latest")
+                        let dominated = match (best_expiry, grant.expires_at) {
+                            (None, Some(_)) => true,
+                            (Some(best_exp), Some(this_exp)) => this_exp < best_exp,
+                            _ => false,
+                        };
+                        if dominated || best_idx.is_none() {
+                            best_idx = Some(i);
+                            best_expiry = grant.expires_at;
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        let idx = match best_idx {
+            Some(i) => i,
+            None => return Err(PurchaseError::InsufficientScholarshipCredits),
+        };
+
+        let grant_id = ids.get_unchecked(idx);
+        let key = DataKey::ScholarshipGrant(grant_id);
+        let mut grant: ScholarshipCreditGrant = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(PurchaseError::ScholarshipGrantNotFound)?;
+
+        let take = remaining_to_consume.min(grant.remaining_credits);
+        grant.remaining_credits = grant
+            .remaining_credits
+            .checked_sub(take)
+            .ok_or(PurchaseError::ArithmeticOverflow)?;
+        if grant.remaining_credits == 0 {
+            grant.active = false;
+            // Remove from learner's list
+            remove_grant_from_learner(env, learner, grant_id);
+            // Re-read the list since we just modified it
+            // (remove_grant_from_learner already persisted the change)
+        }
+        env.storage().persistent().set(&key, &grant);
+        extend_persistent_ttl(env, &key);
+
+        remaining_to_consume = remaining_to_consume
+            .checked_sub(take)
+            .ok_or(PurchaseError::ArithmeticOverflow)?;
+        total_consumed = total_consumed
+            .checked_add(take)
+            .ok_or(PurchaseError::ArithmeticOverflow)?;
+    }
+
+    // Update aggregate balance
+    decrement_learner_balance(env, learner, total_consumed);
+
+    Ok(total_consumed)
+}
+
+fn index_scholarship_issuer(env: &Env, issuer: &Address) {
+    let count: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::ScholarshipIssuerIndexCount)
+        .unwrap_or(0);
+    let index_key = DataKey::ScholarshipIssuerIndex(count);
+    env.storage().persistent().set(&index_key, issuer);
+    extend_persistent_ttl(env, &index_key);
+    env.storage()
+        .instance()
+        .set(&DataKey::ScholarshipIssuerIndexCount, &(count + 1));
+    extend_instance_ttl(env);
 }
 
 #[cfg(test)]

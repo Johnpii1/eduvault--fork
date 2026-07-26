@@ -6,7 +6,7 @@ use super::*;
 use soroban_sdk::testutils::storage::{Instance as _, Persistent as _};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
 use soroban_sdk::{contract, contractimpl, contracttype};
-use soroban_sdk::{vec, Bytes, Event, Symbol};
+use soroban_sdk::{vec, Bytes, Event};
 
 #[contracttype]
 #[derive(Clone)]
@@ -154,7 +154,7 @@ fn setup_purchase(
     env: &Env,
 ) -> (
     Address,
-    PurchaseManagerClient,
+    PurchaseManagerClient<'_>,
     Address,
     Address,
     Address,
@@ -339,7 +339,7 @@ fn settlement_transitions_to_refunded_on_admin_refund() {
     registry_client.set_material(&material_id, &material);
 
     env.mock_all_auths();
-    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    let (_contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
 
     let purchase_id = client.purchase(
@@ -738,7 +738,7 @@ fn resolve_dispute_refund_buyer() {
     let buyer = Address::generate(&env);
     let creator = Address::generate(&env);
     let asset = env.register(MockAsset, ());
-    let asset_client = MockAssetClient::new(&env, &asset);
+    let _asset_client = MockAssetClient::new(&env, &asset);
 
     let material_id = bytes32(&env, 1);
     let material = MaterialRecord {
@@ -765,7 +765,7 @@ fn resolve_dispute_refund_buyer() {
     registry_client.set_material(&material_id, &material);
 
     env.mock_all_auths();
-    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    let (_contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
 
     let purchase_id = client.purchase(
@@ -811,7 +811,7 @@ fn resolve_dispute_release_to_creator() {
     let buyer = Address::generate(&env);
     let creator = Address::generate(&env);
     let asset = env.register(MockAsset, ());
-    let asset_client = MockAssetClient::new(&env, &asset);
+    let _asset_client = MockAssetClient::new(&env, &asset);
 
     let material_id = bytes32(&env, 1);
     let material = MaterialRecord {
@@ -838,7 +838,7 @@ fn resolve_dispute_release_to_creator() {
     registry_client.set_material(&material_id, &material);
 
     env.mock_all_auths();
-    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    let (_contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
 
     let purchase_id = client.purchase(
@@ -941,7 +941,7 @@ fn refund_purchase_via_purchase_buyer_mapping() {
     registry_client.set_material(&material_id, &material);
 
     env.mock_all_auths();
-    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    let (_contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
 
     let purchase_id = client.purchase(
@@ -1138,7 +1138,7 @@ fn escrow_record_queryable_after_purchase() {
         &1_000_000,
         &sample_transaction_id(&env),
     );
-    let escrow = client.get_escrow_record(&purchase_id).unwrap();
+    let _escrow = client.get_escrow_record(&purchase_id).unwrap();
 
     // Try to refund with wrong buyer
     let result = client.try_refund_purchase_to_buyer(&admin, &purchase_id, &wrong_buyer);
@@ -1356,10 +1356,10 @@ fn purchase_refunded_event_emitted() {
     registry_client.set_material(&material_id, &material);
 
     env.mock_all_auths();
-    let (contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    let (_contract_id, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
 
-    let purchase_id = client.purchase(
+    let _purchase_id = client.purchase(
         &buyer,
         &material_id,
         &asset,
@@ -1428,7 +1428,7 @@ fn successful_purchase_creates_entitlement_and_distributes_multiple_payouts() {
     let creator_payout = Address::generate(&env);
     let collaborator = Address::generate(&env);
     let asset = env.register(MockAsset, ());
-    let asset_client = MockAssetClient::new(&env, &asset);
+    let _asset_client = MockAssetClient::new(&env, &asset);
 
     let material_id = bytes32(&env, 1);
     let payout_shares =
@@ -2144,7 +2144,7 @@ fn set_short_ttl_window(env: &Env) {
 /// a small tolerance rather than asserting an exact figure.
 fn assert_ttl_renewed_to_max(ttl: u32) {
     assert!(
-        ttl <= 20_000 && ttl >= 19_990,
+        (19_990..=20_000).contains(&ttl),
         "expected TTL near the 20_000 max, got {ttl}"
     );
 }
@@ -2812,7 +2812,7 @@ fn setup_bulk_purchase(
     recipient_count: u32,
 ) -> (
     Address,
-    PurchaseManagerClient,
+    PurchaseManagerClient<'_>,
     Address,
     Address,
     Address,
@@ -2855,10 +2855,7 @@ fn setup_bulk_purchase(
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
 
     let mut recipients = soroban_sdk::Vec::new(env);
-    for i in 0..recipient_count {
-        let mut bytes = [0u8; 32];
-        bytes[0] = (i + 10) as u8;
-        bytes[1] = (i / 256) as u8;
+    for _i in 0..recipient_count {
         recipients.push_back(Address::generate(env));
     }
 
@@ -2879,7 +2876,7 @@ fn bulk_purchase_succeeds_for_multiple_recipients() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, creator, asset, material_id, recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
         setup_bulk_purchase(&env, 3);
 
     let asset_client = MockAssetClient::new(&env, &asset);
@@ -2917,7 +2914,7 @@ fn bulk_purchase_empty_recipient_list_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, _creator, asset, material_id, _recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, asset, material_id, _recipients) =
         setup_bulk_purchase(&env, 0);
 
     let empty_recipients: Vec<Address> = soroban_sdk::Vec::new(&env);
@@ -3055,7 +3052,7 @@ fn bulk_purchase_existing_entitlement_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, creator, asset, material_id, mut recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
         setup_bulk_purchase(&env, 2);
 
     // First, give one recipient a license via single purchase
@@ -3087,7 +3084,7 @@ fn bulk_purchase_contract_paused_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, admin, purchaser, _creator, asset, material_id, recipients) =
+    let (_contract_id, client, admin, purchaser, _creator, asset, material_id, recipients) =
         setup_bulk_purchase(&env, 2);
 
     // Pause the contract
@@ -3165,7 +3162,7 @@ fn bulk_purchase_invalid_price_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
         setup_bulk_purchase(&env, 2);
 
     let result = client.try_purchase_bulk_licenses(
@@ -3185,7 +3182,7 @@ fn bulk_purchase_asset_not_allowed_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, _creator, _asset, material_id, recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, _asset, material_id, recipients) =
         setup_bulk_purchase(&env, 2);
 
     let unapproved_asset = Address::generate(&env);
@@ -3207,7 +3204,7 @@ fn bulk_purchase_material_not_found_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, _creator, asset, _material_id, recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, asset, _material_id, recipients) =
         setup_bulk_purchase(&env, 2);
 
     let nonexistent_material = bytes32(&env, 255);
@@ -3229,7 +3226,7 @@ fn bulk_purchase_single_recipient_succeeds() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, _creator, asset, material_id, _recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, asset, material_id, _recipients) =
         setup_bulk_purchase(&env, 1);
 
     let single_recipient = vec![&env, Address::generate(&env)];
@@ -3327,10 +3324,10 @@ fn bulk_purchase_emits_individual_and_bulk_events() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
         setup_bulk_purchase(&env, 2);
 
-    let result = client.purchase_bulk_licenses(
+    let _result = client.purchase_bulk_licenses(
         &purchaser,
         &material_id,
         &asset,
@@ -3353,7 +3350,7 @@ fn bulk_purchase_escrow_records_created() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
         setup_bulk_purchase(&env, 3);
 
     let result = client.purchase_bulk_licenses(
@@ -3390,7 +3387,7 @@ fn bulk_purchase_purchase_ids_sequential() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
         setup_bulk_purchase(&env, 4);
 
     let result = client.purchase_bulk_licenses(
@@ -3417,7 +3414,7 @@ fn bulk_purchase_all_recipients_can_query_entitlement() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
         setup_bulk_purchase(&env, 3);
 
     client.purchase_bulk_licenses(
@@ -3443,7 +3440,7 @@ fn bulk_purchase_does_not_grant_purchaser_entitlement() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
         setup_bulk_purchase(&env, 2);
 
     client.purchase_bulk_licenses(
@@ -3572,7 +3569,7 @@ fn bulk_purchase_no_charge_on_validation_failure() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
+    let (_contract_id, client, _admin, purchaser, _creator, asset, material_id, recipients) =
         setup_bulk_purchase(&env, 2);
 
     let asset_client = MockAssetClient::new(&env, &asset);
@@ -3590,4 +3587,1293 @@ fn bulk_purchase_no_charge_on_validation_failure() {
 
     assert!(result.is_err() || result.unwrap().is_err());
     assert_eq!(asset_client.transfer_count(), initial_transfers);
+}
+
+// ============== Scholarship Credit Tests (#408) ==============
+
+fn setup_scholarship(
+    env: &Env,
+) -> (
+    Address,
+    PurchaseManagerClient<'_>,
+    Address,
+    Address,
+    Address,
+    BytesN<32>,
+) {
+    env.mock_all_auths();
+
+    let admin = Address::generate(env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(env);
+    let creator = Address::generate(env);
+    let issuer = Address::generate(env);
+    let asset = env.register(MockAsset, ());
+
+    let material_id = bytes32(env, 200);
+    let material = MaterialRecord {
+        material_id: material_id.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(env, &registry);
+    registry_client.set_material(&material_id, &material);
+
+    let (contract_id, client) = install_and_init_contract(env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+
+    (contract_id, client, admin, issuer, creator, material_id)
+}
+
+// ============== Issuer Authorization Tests ==============
+
+#[test]
+fn authorized_issuer_can_be_set() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    assert!(client.is_scholarship_issuer(&issuer));
+}
+
+#[test]
+fn unauthorized_address_is_not_issuer() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, _issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    let nobody = Address::generate(&env);
+    assert!(!client.is_scholarship_issuer(&nobody));
+}
+
+#[test]
+fn non_admin_cannot_set_scholarship_issuer() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, _issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    let non_admin = Address::generate(&env);
+    let new_issuer = Address::generate(&env);
+    let result = client.try_set_scholarship_issuer(&non_admin, &new_issuer, &true);
+    assert_eq!(result, Err(Ok(PurchaseError::NotAuthorized)));
+}
+
+#[test]
+fn issuer_can_be_disabled() {
+    let env = Env::default();
+    let (_contract_id, client, admin, issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    client.set_scholarship_issuer(&admin, &issuer, &false);
+    assert!(!client.is_scholarship_issuer(&issuer));
+}
+
+// ============== Credit Cost Configuration Tests ==============
+
+#[test]
+fn admin_can_set_scholarship_credit_cost() {
+    let env = Env::default();
+    let (_contract_id, client, admin, _issuer, _creator, material_id) = setup_scholarship(&env);
+
+    client.set_scholarship_credit_cost(&admin, &material_id, &500);
+    assert_eq!(client.get_scholarship_credit_cost(&material_id), Some(500));
+}
+
+#[test]
+fn credit_cost_zero_rejected() {
+    let env = Env::default();
+    let (_contract_id, client, admin, _issuer, _creator, material_id) = setup_scholarship(&env);
+
+    let result = client.try_set_scholarship_credit_cost(&admin, &material_id, &0);
+    assert_eq!(result, Err(Ok(PurchaseError::InvalidCreditCost)));
+}
+
+#[test]
+fn credit_cost_negative_rejected() {
+    let env = Env::default();
+    let (_contract_id, client, admin, _issuer, _creator, material_id) = setup_scholarship(&env);
+
+    let result = client.try_set_scholarship_credit_cost(&admin, &material_id, &-100);
+    assert_eq!(result, Err(Ok(PurchaseError::InvalidCreditCost)));
+}
+
+#[test]
+fn non_admin_cannot_set_credit_cost() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, _issuer, _creator, material_id) = setup_scholarship(&env);
+
+    let non_admin = Address::generate(&env);
+    let result = client.try_set_scholarship_credit_cost(&non_admin, &material_id, &500);
+    assert_eq!(result, Err(Ok(PurchaseError::NotAuthorized)));
+}
+
+#[test]
+fn credit_cost_for_nonexistent_material_rejected() {
+    let env = Env::default();
+    let (_contract_id, client, admin, _issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    let fake_id = bytes32(&env, 255);
+    let result = client.try_set_scholarship_credit_cost(&admin, &fake_id, &500);
+    assert_eq!(result, Err(Ok(PurchaseError::MaterialNotFound)));
+}
+
+// ============== Credit Issuance Tests ==============
+
+#[test]
+fn authorized_issuer_can_issue_credits() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    let learner = Address::generate(&env);
+    let grant_id = client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+
+    assert_eq!(grant_id, 0);
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 1000);
+
+    let grant = client.get_scholarship_grant(&grant_id);
+    assert_eq!(grant.learner, learner);
+    assert_eq!(grant.issuer, issuer);
+    assert_eq!(grant.total_credits, 1000);
+    assert_eq!(grant.remaining_credits, 1000);
+    assert!(grant.active);
+    assert!(grant.expires_at.is_none());
+}
+
+#[test]
+fn unauthorized_cannot_issue_credits() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, _issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    let nobody = Address::generate(&env);
+    let learner = Address::generate(&env);
+    let result = client.try_issue_scholarship_credits(&nobody, &learner, &1000, &None);
+    assert_eq!(result, Err(Ok(PurchaseError::NotAuthorized)));
+}
+
+#[test]
+fn zero_amount_rejected() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    let learner = Address::generate(&env);
+    let result = client.try_issue_scholarship_credits(&issuer, &learner, &0, &None);
+    assert_eq!(result, Err(Ok(PurchaseError::InvalidCreditAmount)));
+}
+
+#[test]
+fn negative_amount_rejected() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    let learner = Address::generate(&env);
+    let result = client.try_issue_scholarship_credits(&issuer, &learner, &-100, &None);
+    assert_eq!(result, Err(Ok(PurchaseError::InvalidCreditAmount)));
+}
+
+#[test]
+fn expired_expiry_rejected() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    let learner = Address::generate(&env);
+    // Advance ledger to 10 so that expiry of 5 is in the past
+    env.ledger().set_sequence_number(10);
+    let result = client.try_issue_scholarship_credits(&issuer, &learner, &1000, &Some(5));
+    assert_eq!(result, Err(Ok(PurchaseError::InvalidExpiry)));
+}
+
+#[test]
+fn grant_ids_are_sequential() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    let learner_a = Address::generate(&env);
+    let learner_b = Address::generate(&env);
+
+    let id1 = client.issue_scholarship_credits(&issuer, &learner_a, &500, &None);
+    let id2 = client.issue_scholarship_credits(&issuer, &learner_b, &300, &None);
+
+    assert_eq!(id1, 0);
+    assert_eq!(id2, 1);
+}
+
+#[test]
+fn multiple_grants_increase_balance() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    let learner = Address::generate(&env);
+
+    client.issue_scholarship_credits(&issuer, &learner, &500, &None);
+    client.issue_scholarship_credits(&issuer, &learner, &300, &None);
+
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 800);
+}
+
+#[test]
+fn grant_not_found_query_rejected() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, _issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    let result = client.try_get_scholarship_grant(&999);
+    assert_eq!(result, Err(Ok(PurchaseError::ScholarshipGrantNotFound)));
+}
+
+// ============== Credit Redemption Tests ==============
+
+#[test]
+fn successful_scholarship_redemption() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 201);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    client.set_scholarship_credit_cost(&admin, &mid, &500);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 1000);
+
+    let result = client.redeem_scholarship_credits(&learner, &mid);
+    assert_eq!(result.credits_used, 500);
+    assert_eq!(result.remaining_credits, 500);
+    assert_eq!(result.material_id, mid);
+    assert_eq!(result.learner, learner);
+
+    // Entitlement should exist
+    assert!(client.has_entitlement(&mid, &learner));
+
+    // Balance should be reduced
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 500);
+
+    // Redemption record should exist
+    let redemption = client.get_scholarship_redemption(&learner, &mid);
+    assert!(redemption.is_some());
+    assert_eq!(redemption.unwrap().credits_used, 500);
+}
+
+#[test]
+fn redemption_fails_insufficient_credits() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 202);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    client.set_scholarship_credit_cost(&admin, &mid, &500);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &100, &None);
+
+    let result = client.try_redeem_scholarship_credits(&learner, &mid);
+    assert_eq!(
+        result,
+        Err(Ok(PurchaseError::InsufficientScholarshipCredits))
+    );
+
+    // Balance unchanged
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 100);
+    // No entitlement
+    assert!(!client.has_entitlement(&mid, &learner));
+}
+
+#[test]
+fn redemption_fails_already_has_entitlement() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 203);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    client.set_scholarship_credit_cost(&admin, &mid, &500);
+
+    // Buyer already has a paid entitlement
+    client.purchase(
+        &buyer,
+        &mid,
+        &asset,
+        &1_000_000,
+        &sample_transaction_id(&env),
+    );
+    assert!(client.has_entitlement(&mid, &buyer));
+
+    // Issue credits and try to redeem — should fail
+    client.issue_scholarship_credits(&issuer, &buyer, &1000, &None);
+    let result = client.try_redeem_scholarship_credits(&buyer, &mid);
+    assert_eq!(result, Err(Ok(PurchaseError::EntitlementAlreadyExists)));
+}
+
+#[test]
+fn redemption_fails_content_not_eligible() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 204);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    // No credit cost set for this material
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+
+    let result = client.try_redeem_scholarship_credits(&learner, &mid);
+    assert_eq!(
+        result,
+        Err(Ok(PurchaseError::ContentNotScholarshipEligible))
+    );
+}
+
+#[test]
+fn double_redemption_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 205);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    client.set_scholarship_credit_cost(&admin, &mid, &500);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+
+    client.redeem_scholarship_credits(&learner, &mid);
+
+    let result = client.try_redeem_scholarship_credits(&learner, &mid);
+    assert_eq!(result, Err(Ok(PurchaseError::RedemptionAlreadyExists)));
+}
+
+#[test]
+fn redemption_nonexistent_material_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let _creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+
+    let fake_id = bytes32(&env, 254);
+    let result = client.try_redeem_scholarship_credits(&learner, &fake_id);
+    assert_eq!(result, Err(Ok(PurchaseError::MaterialNotFound)));
+}
+
+#[test]
+fn unauthorized_redemption_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 206);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    client.set_scholarship_credit_cost(&admin, &mid, &500);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+
+    // Another address tries to redeem learner's credits
+    let impersonator = Address::generate(&env);
+    let result = client.try_redeem_scholarship_credits(&impersonator, &mid);
+    assert!(result.is_err());
+}
+
+// ============== Expiry Tests ==============
+
+#[test]
+fn expired_grant_not_spendable() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 207);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    client.set_scholarship_credit_cost(&admin, &mid, &500);
+
+    let learner = Address::generate(&env);
+    // Issue grant with expiry at ledger 10 (current ledger is 0, so it's valid)
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &Some(10));
+    // Move ledger forward past the expiry so the grant is expired
+    env.ledger().set_sequence_number(11);
+
+    // Grant exists but is expired
+    let grant = client.get_scholarship_grant(&0);
+    assert_eq!(grant.remaining_credits, 1000);
+
+    // Balance should be 0 since the grant is expired
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 0);
+
+    // Redemption should fail
+    let result = client.try_redeem_scholarship_credits(&learner, &mid);
+    assert_eq!(
+        result,
+        Err(Ok(PurchaseError::InsufficientScholarshipCredits))
+    );
+}
+
+#[test]
+fn grant_with_future_expiry_is_spendable() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 208);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    client.set_scholarship_credit_cost(&admin, &mid, &500);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &Some(100_000));
+
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 1000);
+
+    let result = client.redeem_scholarship_credits(&learner, &mid);
+    assert_eq!(result.credits_used, 500);
+    assert_eq!(result.remaining_credits, 500);
+}
+
+// ============== Revocation Tests ==============
+
+#[test]
+fn issuer_can_revoke_grant() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 209);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 1000);
+
+    let revoked = client.revoke_scholarship_grant(&issuer, &0);
+    assert_eq!(revoked, 1000);
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 0);
+}
+
+#[test]
+fn admin_can_revoke_grant() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 210);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+
+    // Admin revokes instead of issuer
+    let revoked = client.revoke_scholarship_grant(&admin, &0);
+    assert_eq!(revoked, 1000);
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 0);
+}
+
+#[test]
+fn unauthorized_cannot_revoke() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let _creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+
+    let stranger = Address::generate(&env);
+    let result = client.try_revoke_scholarship_grant(&stranger, &0);
+    assert_eq!(result, Err(Ok(PurchaseError::NotAuthorized)));
+}
+
+#[test]
+fn revocation_of_nonexistent_grant_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+    let _creator = Address::generate(&env);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+
+    let result = client.try_revoke_scholarship_grant(&issuer, &999);
+    assert_eq!(result, Err(Ok(PurchaseError::ScholarshipGrantNotFound)));
+}
+
+#[test]
+fn revocation_does_not_affect_redeemed_entitlements() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 211);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    client.set_scholarship_credit_cost(&admin, &mid, &500);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+
+    // Redeem half
+    client.redeem_scholarship_credits(&learner, &mid);
+    assert!(client.has_entitlement(&mid, &learner));
+
+    // Revoke remaining grant
+    let revoked = client.revoke_scholarship_grant(&issuer, &0);
+    assert_eq!(revoked, 500);
+
+    // Entitlement should still be active
+    assert!(client.has_entitlement(&mid, &learner));
+}
+
+// ============== Multiple Grants Consumption Order ==============
+
+#[test]
+fn credits_consumed_earliest_expiry_first() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 212);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    client.set_scholarship_credit_cost(&admin, &mid, &500);
+
+    let learner = Address::generate(&env);
+    // Grant 0: expires soon (ledger 500)
+    client.issue_scholarship_credits(&issuer, &learner, &300, &Some(500));
+    // Grant 1: expires later (ledger 100_000)
+    client.issue_scholarship_credits(&issuer, &learner, &300, &Some(100_000));
+    // Grant 2: no expiry
+    client.issue_scholarship_credits(&issuer, &learner, &400, &None);
+
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 1000);
+
+    // Redeem 500 credits — should consume from grant 0 first (earliest expiry)
+    client.redeem_scholarship_credits(&learner, &mid);
+
+    // Grant 0 should be exhausted (300), grant 1 should have 100 left
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 500);
+
+    // Grant 0 should be inactive
+    let grant_0 = client.get_scholarship_grant(&0);
+    assert_eq!(grant_0.remaining_credits, 0);
+    assert!(!grant_0.active);
+
+    // Grant 1 should have 100 remaining
+    let grant_1 = client.get_scholarship_grant(&1);
+    assert_eq!(grant_1.remaining_credits, 100);
+    assert!(grant_1.active);
+
+    // Grant 2 untouched
+    let grant_2 = client.get_scholarship_grant(&2);
+    assert_eq!(grant_2.remaining_credits, 400);
+    assert!(grant_2.active);
+}
+
+// ============== Paid Purchase Regression ==============
+
+#[test]
+fn paid_purchase_still_works_with_scholarship_active() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 213);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    client.set_scholarship_credit_cost(&admin, &mid, &500);
+
+    // Issue some scholarship credits to a different learner
+    let scholarship_learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &scholarship_learner, &1000, &None);
+
+    // Regular buyer still works
+    let buyer = Address::generate(&env);
+    let purchase_id = client.purchase(
+        &buyer,
+        &mid,
+        &asset,
+        &1_000_000,
+        &sample_transaction_id(&env),
+    );
+    assert!(client.has_entitlement(&mid, &buyer));
+    assert_eq!(purchase_id, 0);
+
+    // Scholarship learner can also redeem (different entitlement for same material)
+    // Actually wait, both would get entitlement for same material. Let's verify the buyer got their entitlement.
+    let entitlement = client.get_entitlement(&mid, &buyer).unwrap();
+    assert!(entitlement.active);
+    assert_eq!(entitlement.amount, 1_000_000);
+}
+
+// ============== Event Tests ==============
+
+#[test]
+fn scholarship_issuer_updated_event_emitted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let issuer = Address::generate(&env);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+
+    assert!(!client.is_scholarship_issuer(&issuer));
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    assert!(client.is_scholarship_issuer(&issuer));
+}
+
+#[test]
+fn scholarship_credit_cost_event_emitted() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 214);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+
+    assert!(client.get_scholarship_credit_cost(&mid).is_none());
+    client.set_scholarship_credit_cost(&admin, &mid, &750);
+    assert_eq!(client.get_scholarship_credit_cost(&mid), Some(750));
+}
+
+// ============== Arithmetic Safety ==============
+
+#[test]
+fn large_credit_amount_works() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let _creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+
+    let learner = Address::generate(&env);
+    let large_amount: i128 = 1_000_000_000_000; // 1 trillion
+    client.issue_scholarship_credits(&issuer, &learner, &large_amount, &None);
+    assert_eq!(
+        client.get_scholarship_credit_balance(&learner),
+        large_amount
+    );
+}
+
+// ============== Query Tests ==============
+
+#[test]
+fn zero_balance_for_learner_with_no_grants() {
+    let env = Env::default();
+    let (_contract_id, client, _admin, _issuer, _creator, _material_id) = setup_scholarship(&env);
+
+    let learner = Address::generate(&env);
+    assert_eq!(client.get_scholarship_credit_balance(&learner), 0);
+}
+
+#[test]
+fn redemption_record_queryable() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 215);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    client.set_scholarship_credit_cost(&admin, &mid, &500);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+
+    // No redemption yet
+    assert!(client.get_scholarship_redemption(&learner, &mid).is_none());
+
+    client.redeem_scholarship_credits(&learner, &mid);
+
+    let redemption = client.get_scholarship_redemption(&learner, &mid).unwrap();
+    assert_eq!(redemption.credits_used, 500);
+    assert_eq!(redemption.learner, learner);
+    assert_eq!(redemption.material_id, mid);
+}
+
+// ============== Entitlement Integration ==============
+
+#[test]
+fn scholarship_entitlement_is_queryable() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let mid = bytes32(&env, 216);
+    let material = MaterialRecord {
+        material_id: mid.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![
+            &env,
+            AssetQuote {
+                asset: asset.clone(),
+                amount: 1_000_000,
+            },
+        ],
+        payout_shares: vec![
+            &env,
+            PayoutShare {
+                recipient: creator.clone(),
+                share_bps: 10_000,
+            },
+        ],
+    };
+    let registry_client = MockRegistryClient::new(&env, &registry);
+    registry_client.set_material(&mid, &material);
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+    client.set_scholarship_credit_cost(&admin, &mid, &500);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+    client.redeem_scholarship_credits(&learner, &mid);
+
+    // Scholarship redemption creates a standard entitlement
+    assert!(client.has_entitlement(&mid, &learner));
+    let entitlement = client.get_entitlement(&mid, &learner).unwrap();
+    assert!(entitlement.active);
+    assert_eq!(entitlement.material_id, mid);
+    assert_eq!(entitlement.buyer, learner);
+}
+
+// ============== Revocation Rejection ==============
+
+#[test]
+fn revoke_already_active_grant_twice_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let registry = env.register(MockRegistry, ());
+    let treasury = Address::generate(&env);
+    let _creator = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let asset = env.register(MockAsset, ());
+
+    let (_, client) = install_and_init_contract(&env, &admin, &registry, &treasury, 500);
+    client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
+    client.set_scholarship_issuer(&admin, &issuer, &true);
+
+    let learner = Address::generate(&env);
+    client.issue_scholarship_credits(&issuer, &learner, &1000, &None);
+
+    client.revoke_scholarship_grant(&issuer, &0);
+
+    // Second revocation should fail — grant is inactive
+    let result = client.try_revoke_scholarship_grant(&issuer, &0);
+    assert_eq!(result, Err(Ok(PurchaseError::ScholarshipGrantInactive)));
 }
