@@ -1,8 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, BytesN, Env,
-    IntoVal, Symbol, Val, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, BytesN,
+    Env, IntoVal, Symbol, Val, Vec,
 };
 
 pub mod auth;
@@ -12,6 +12,13 @@ const MAX_PLATFORM_FEE_BPS: u32 = 1_000;
 const MAX_PAYOUT_RECIPIENTS: u32 = 5;
 const ESCROW_LOCK_PERIOD_LEDGERS: u32 = 35_000;
 const DISPUTE_WINDOW_LEDGERS: u32 = 30_000;
+
+/// Maximum number of recipients allowed in a single bulk-license purchase.
+/// Capped at 50 to stay within Soroban transaction resource limits while
+/// still covering typical school/class sizes. Each recipient creates a
+/// persistent-storage entitlement entry and an escrow record, so the
+/// budget must account for ~2*N writes plus N+1 token transfers.
+const MAX_BULK_LICENSE_RECIPIENTS: u32 = 50;
 
 /// TTL renewal policy (#464): whenever a tracked entry's remaining TTL drops
 /// below half of the network's configured maximum, extend it back out to
@@ -196,6 +203,18 @@ pub struct DisputeRecord {
     pub resolved_ledger: Option<u32>,
 }
 
+/// Result returned by a successful bulk-license purchase.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BulkLicensePurchaseResult {
+    pub material_id: BytesN<32>,
+    pub purchaser: Address,
+    pub recipient_count: u32,
+    pub unit_price: i128,
+    pub total_paid: i128,
+    pub first_purchase_id: u64,
+}
+
 /// Data keys for contract storage
 #[contracttype]
 #[derive(Clone)]
@@ -211,7 +230,6 @@ enum DataKey {
     Settlement(u64),
     Dispute(u64),
     PurchaseBuyer(u64),
-    PendingAdmin,
     CreatorTier(Address),
     /// Maintenance index (#464): sequential slot -> (purchase_id,
     /// material_id, buyer), populated at purchase time so
@@ -282,6 +300,12 @@ pub enum PurchaseError {
     PurchaseAlreadySettled = 76,
     RefundNotAllowed = 77,
     InsufficientEscrowBalance = 78,
+
+    // Bulk licensing errors
+    EmptyRecipientList = 80,
+    TooManyRecipients = 81,
+    DuplicateRecipient = 82,
+    ArithmeticOverflow = 83,
 }
 
 /// Event: purchase.completed
@@ -427,6 +451,20 @@ pub struct CreatorTierUpdatedEvent {
     #[topic]
     pub creator: Address,
     pub tier: CreatorTier,
+}
+
+/// Event: purchase.bulk_completed
+#[contractevent(topics = ["purchase", "bulk_completed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BulkPurchaseCompletedEvent {
+    #[topic]
+    pub purchaser: Address,
+    #[topic]
+    pub material_id: BytesN<32>,
+    pub recipient_count: u32,
+    pub unit_price: i128,
+    pub total_paid: i128,
+    pub asset: Address,
 }
 
 /// The PurchaseManager contract
@@ -711,6 +749,261 @@ impl PurchaseManager {
         Ok(purchase_id)
     }
 
+    /// Purchase licenses for multiple recipients in a single operation.
+    ///
+    /// The `purchaser` pays the aggregate cost for all recipients. Each
+    /// recipient receives their own entitlement and escrow record. The
+    /// operation is atomic: if any validation fails or any recipient is
+    /// ineligible, the entire transaction is rejected and no tokens are
+    /// transferred.
+    ///
+    /// # Arguments
+    /// * `purchaser` - The address authorizing and paying for the licenses.
+    /// * `material_id` - The educational material to license.
+    /// * `asset` - The payment asset address.
+    /// * `expected_unit_price` - Expected price per license (must match quote).
+    /// * `transaction_id` - Off-chain transaction reference.
+    /// * `recipients` - List of addresses to receive licenses.
+    ///
+    /// # Errors
+    /// * `EmptyRecipientList` - recipients is empty
+    /// * `TooManyRecipients` - recipients exceeds MAX_BULK_LICENSE_RECIPIENTS
+    /// * `DuplicateRecipient` - same address appears twice in recipients
+    /// * `EntitlementAlreadyExists` - any recipient already has an active license
+    /// * `ContractPaused` - contract is paused
+    /// * `MaterialNotActive` - material is not active
+    /// * `AssetNotAllowed` - asset is not in the allowlist
+    /// * `InvalidQuoteAmount` - expected_unit_price does not match the quote
+    /// * `AssetNotAcceptedForMaterial` - asset not in material quotes
+    /// * `ArithmeticOverflow` - total cost overflowed
+    pub fn purchase_bulk_licenses(
+        env: Env,
+        purchaser: Address,
+        material_id: BytesN<32>,
+        asset: Address,
+        expected_unit_price: i128,
+        transaction_id: Bytes,
+        recipients: Vec<Address>,
+    ) -> Result<BulkLicensePurchaseResult, PurchaseError> {
+        purchaser.require_auth();
+
+        // Validate recipient list
+        let recipient_count = recipients.len();
+        if recipient_count == 0 {
+            return Err(PurchaseError::EmptyRecipientList);
+        }
+        if recipient_count > MAX_BULK_LICENSE_RECIPIENTS {
+            return Err(PurchaseError::TooManyRecipients);
+        }
+
+        // Check for duplicates
+        let mut i = 0u32;
+        while i < recipient_count {
+            let addr_i = recipients.get_unchecked(i);
+            let mut j = i + 1;
+            while j < recipient_count {
+                if addr_i == recipients.get_unchecked(j) {
+                    return Err(PurchaseError::DuplicateRecipient);
+                }
+                j += 1;
+            }
+            i += 1;
+        }
+
+        // Platform and asset checks (before material fetch for cheap rejections)
+        let config = get_platform_config(&env)?;
+        if config.paused {
+            return Err(PurchaseError::ContractPaused);
+        }
+        if !is_asset_allowed(&env, &asset) {
+            return Err(PurchaseError::AssetNotAllowed);
+        }
+
+        // Fetch material and validate
+        let material: MaterialRecord = config
+            .registry
+            .get_material(&env, &material_id)
+            .map_err(|_| PurchaseError::MaterialNotFound)?;
+        if material.status != MaterialStatus::Active || material.paused {
+            return Err(PurchaseError::MaterialNotActive);
+        }
+
+        let quote = find_quote(&material.quotes, &asset)
+            .ok_or(PurchaseError::AssetNotAcceptedForMaterial)?;
+        if quote.amount != expected_unit_price || quote.amount <= 0 {
+            return Err(PurchaseError::InvalidQuoteAmount);
+        }
+
+        validate_payout_shares(&material.payout_shares)?;
+
+        // Check no recipient already has an active entitlement
+        i = 0;
+        while i < recipient_count {
+            let recipient = recipients.get_unchecked(i);
+            if has_entitlement_internal(&env, &material_id, &recipient) {
+                return Err(PurchaseError::EntitlementAlreadyExists);
+            }
+            i += 1;
+        }
+
+        // Calculate total cost with checked arithmetic
+        let recipient_count_i128 = recipient_count as i128;
+        let total_amount = quote
+            .amount
+            .checked_mul(recipient_count_i128)
+            .ok_or(PurchaseError::ArithmeticOverflow)?;
+        if total_amount <= 0 {
+            return Err(PurchaseError::ArithmeticOverflow);
+        }
+
+        // Payment: single aggregate transfer from purchaser
+        let effective_fee_bps =
+            get_effective_fee_bps(&env, &material.creator, config.platform_fee_bps);
+        let total_platform_fee = (total_amount * effective_fee_bps as i128) / BASIS_POINTS as i128;
+        let total_seller_net = total_amount - total_platform_fee;
+
+        // Transfer platform fee
+        if total_platform_fee > 0 {
+            transfer_asset(
+                &env,
+                &purchaser,
+                &config.treasury,
+                &asset,
+                total_platform_fee,
+            )?;
+        }
+
+        // Transfer seller net to escrow (contract holds until release)
+        if total_seller_net > 0 {
+            transfer_asset(
+                &env,
+                &purchaser,
+                &env.current_contract_address(),
+                &asset,
+                total_seller_net,
+            )?;
+        }
+
+        let first_purchase_id = get_and_increment_purchase_nonce(&env)?;
+        let current_ledger = env.ledger().sequence();
+
+        // Grant entitlement and create escrow for each recipient
+        let mut idx = 0u32;
+        let mut current_purchase_id = first_purchase_id;
+        while idx < recipient_count {
+            let recipient = recipients.get_unchecked(idx);
+
+            // Per-recipient escrow (individual purchase_id for dispute/refund tracking)
+            let unit_platform_fee =
+                (quote.amount * effective_fee_bps as i128) / BASIS_POINTS as i128;
+            let unit_seller_net = quote.amount - unit_platform_fee;
+
+            let escrow_record = EscrowRecord {
+                purchase_id: current_purchase_id,
+                material_id: material_id.clone(),
+                asset: asset.clone(),
+                total_amount: quote.amount,
+                platform_fee: unit_platform_fee,
+                seller_net: unit_seller_net,
+                payout_shares: material.payout_shares.clone(),
+                purchase_ledger: current_ledger,
+                claimed: false,
+            };
+            set_escrow_record(&env, current_purchase_id, &escrow_record);
+
+            // Entitlement for this recipient
+            let entitlement = EntitlementRecord {
+                material_id: material_id.clone(),
+                buyer: recipient.clone(),
+                active: true,
+                purchase_id: current_purchase_id,
+                asset: asset.clone(),
+                amount: quote.amount,
+                granted_ledger: current_ledger,
+            };
+            set_entitlement(&env, &entitlement);
+
+            // Index for TTL maintenance
+            index_purchase(&env, current_purchase_id, &material_id, &recipient);
+
+            // Store purchase -> buyer mapping for admin refunds
+            env.storage()
+                .persistent()
+                .set(&DataKey::PurchaseBuyer(current_purchase_id), &recipient);
+
+            // Initialize settlement in Pending state
+            let settlement = SettlementRecord {
+                purchase_id: current_purchase_id,
+                state: SettlementState::Pending,
+                disputed_ledger: None,
+                resolved_ledger: None,
+                refunded_amount: 0,
+            };
+            set_settlement_record(&env, current_purchase_id, &settlement);
+
+            current_purchase_id = current_purchase_id
+                .checked_add(1)
+                .ok_or(PurchaseError::ArithmeticOverflow)?;
+            idx += 1;
+        }
+
+        // Emit individual purchase completed events for indexer compatibility
+        idx = 0;
+        let mut event_purchase_id = first_purchase_id;
+        while idx < recipient_count {
+            let recipient = recipients.get_unchecked(idx);
+            PurchaseCompletedEvent {
+                purchase_id: event_purchase_id,
+                material_id: material_id.clone(),
+                buyer: recipient.clone(),
+                seller: material.creator.clone(),
+                asset: asset.clone(),
+                amount: quote.amount,
+                platform_fee: (quote.amount * effective_fee_bps as i128) / BASIS_POINTS as i128,
+                seller_net_amount: quote.amount
+                    - (quote.amount * effective_fee_bps as i128) / BASIS_POINTS as i128,
+                entitlement_active: true,
+                transaction_id: transaction_id.clone(),
+            }
+            .publish(&env);
+
+            EscrowCreatedEvent {
+                purchase_id: event_purchase_id,
+                material_id: material_id.clone(),
+                asset: asset.clone(),
+                amount: quote.amount
+                    - (quote.amount * effective_fee_bps as i128) / BASIS_POINTS as i128,
+                lock_until_ledger: current_ledger + ESCROW_LOCK_PERIOD_LEDGERS,
+            }
+            .publish(&env);
+
+            event_purchase_id = event_purchase_id
+                .checked_add(1)
+                .ok_or(PurchaseError::ArithmeticOverflow)?;
+            idx += 1;
+        }
+
+        // Emit aggregate bulk-purchase event
+        BulkPurchaseCompletedEvent {
+            purchaser: purchaser.clone(),
+            material_id: material_id.clone(),
+            recipient_count,
+            unit_price: quote.amount,
+            total_paid: total_amount,
+            asset: asset.clone(),
+        }
+        .publish(&env);
+
+        Ok(BulkLicensePurchaseResult {
+            material_id,
+            purchaser,
+            recipient_count,
+            unit_price: quote.amount,
+            total_paid: total_amount,
+            first_purchase_id,
+        })
+    }
+
     /// Check if a buyer has an active entitlement for a material
     pub fn has_entitlement(env: Env, material_id: BytesN<32>, buyer: Address) -> bool {
         has_entitlement_internal(&env, &material_id, &buyer)
@@ -848,7 +1141,7 @@ impl PurchaseManager {
         buyer.require_auth();
 
         // Validate reason is not empty
-        if reason.len() == 0 {
+        if reason.is_empty() {
             return Err(PurchaseError::InvalidDisputeReason);
         }
 
@@ -868,7 +1161,11 @@ impl PurchaseManager {
         }
 
         // Check no dispute already exists for this purchase (must be first)
-        if env.storage().persistent().has(&DataKey::Dispute(purchase_id)) {
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Dispute(purchase_id))
+        {
             return Err(PurchaseError::DisputeAlreadyExists);
         }
 
@@ -977,10 +1274,8 @@ impl PurchaseManager {
                 set_escrow_record(&env, purchase_id, &escrow);
 
                 // Revoke entitlement
-                let entitlement_key = DataKey::Entitlement((
-                    escrow.material_id.clone(),
-                    dispute.opener.clone(),
-                ));
+                let entitlement_key =
+                    DataKey::Entitlement((escrow.material_id.clone(), dispute.opener.clone()));
                 if let Some(mut entitlement) = env
                     .storage()
                     .persistent()
@@ -1262,7 +1557,9 @@ impl PurchaseManager {
 
     /// Get the dispute record for a purchase
     pub fn get_dispute(env: Env, purchase_id: u64) -> Option<DisputeRecord> {
-        env.storage().persistent().get(&DataKey::Dispute(purchase_id))
+        env.storage()
+            .persistent()
+            .get(&DataKey::Dispute(purchase_id))
     }
 
     /// Get the current settlement state for a purchase
@@ -1275,9 +1572,7 @@ impl PurchaseManager {
         if let Some(settlement) = get_settlement_record_internal(&env, purchase_id) {
             matches!(
                 settlement.state,
-                SettlementState::Released
-                    | SettlementState::Refunded
-                    | SettlementState::Expired
+                SettlementState::Released | SettlementState::Refunded | SettlementState::Expired
             )
         } else {
             false
@@ -1384,7 +1679,7 @@ impl PurchaseManager {
         asset: Address,
         enabled: bool,
     ) -> Result<(), PurchaseError> {
-        Self::set_asset_allowed(&env, admin, asset, AssetKind::Token, enabled)
+        Self::set_asset_allowed(env, admin, asset, AssetKind::Token, enabled)
     }
 
     /// Register an institution-issued access asset (admin only).
@@ -1396,7 +1691,7 @@ impl PurchaseManager {
         asset: Address,
         enabled: bool,
     ) -> Result<(), PurchaseError> {
-        Self::set_asset_allowed(&env, admin, asset, AssetKind::InstitutionAsset, enabled)
+        Self::set_asset_allowed(env, admin, asset, AssetKind::InstitutionAsset, enabled)
     }
 
     /// Register the Stellar native asset XLM for checkout (admin only).
@@ -1407,7 +1702,7 @@ impl PurchaseManager {
         asset: Address,
         enabled: bool,
     ) -> Result<(), PurchaseError> {
-        Self::set_asset_allowed(&env, admin, asset, AssetKind::Native, enabled)
+        Self::set_asset_allowed(env, admin, asset, AssetKind::Native, enabled)
     }
 
     /// Configure the price-oracle address (admin only).
@@ -1523,7 +1818,9 @@ impl PurchaseManager {
     ) -> Result<(), PurchaseError> {
         auth::require_admin(&env, &admin)?;
 
-        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
         extend_instance_ttl(&env);
 
         AdminTransferInitiatedEvent {
@@ -1597,11 +1894,7 @@ impl PurchaseManager {
             index_creator_tier(&env, &creator);
         }
 
-        CreatorTierUpdatedEvent {
-            creator,
-            tier,
-        }
-        .publish(&env);
+        CreatorTierUpdatedEvent { creator, tier }.publish(&env);
 
         Ok(())
     }
@@ -1641,10 +1934,10 @@ impl PurchaseManager {
         let mut i = cursor;
         while i < end {
             let index_key = DataKey::PurchaseIndex(i);
-            if let Some((purchase_id, material_id, buyer)) = env
-                .storage()
-                .persistent()
-                .get::<_, (u64, BytesN<32>, Address)>(&index_key)
+            if let Some((purchase_id, material_id, buyer)) =
+                env.storage()
+                    .persistent()
+                    .get::<_, (u64, BytesN<32>, Address)>(&index_key)
             {
                 extend_persistent_ttl(&env, &index_key);
 
@@ -1833,7 +2126,9 @@ fn get_platform_config(env: &Env) -> Result<PlatformConfig, PurchaseError> {
 }
 
 fn put_platform_config(env: &Env, config: &PlatformConfig) {
-    env.storage().instance().set(&DataKey::PlatformConfig, config);
+    env.storage()
+        .instance()
+        .set(&DataKey::PlatformConfig, config);
     extend_instance_ttl(env);
 }
 
@@ -2027,15 +2322,6 @@ fn distribute_payout_shares_from_contract(
         return Err(PurchaseError::InvalidPayoutShares);
     }
 
-    Ok(())
-}
-
-/// Verify that `caller` is the current admin (used by functions that call
-/// `require_auth` before this check).
-fn verify_admin(env: &Env, caller: &Address) -> Result<(), PurchaseError> {
-    if !auth::has_admin_role(env, caller) {
-        return Err(PurchaseError::NotAuthorized);
-    }
     Ok(())
 }
 

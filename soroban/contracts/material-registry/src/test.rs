@@ -773,9 +773,10 @@ fn sale_term_update_write_cost_drops_at_least_20_percent_vs_legacy_layout() {
         updated_ledger: env.ledger().sequence(),
     };
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&LegacyDataKey::Material(material_id.clone()), &legacy_record);
+        env.storage().persistent().set(
+            &LegacyDataKey::Material(material_id.clone()),
+            &legacy_record,
+        );
     });
     let legacy_write_bytes = env.cost_estimate().resources().write_bytes;
 
@@ -876,15 +877,20 @@ fn material_ttl_renews_on_read_after_partial_lapse() {
     let core_key = DataKey::MaterialCore(material_id.clone());
     let sale_key = DataKey::MaterialSale(material_id.clone());
 
-    let initial_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&core_key));
+    let initial_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&core_key)
+    });
     assert_ttl_renewed_to_max(initial_ttl);
 
     // Advance past the renewal threshold without reading the material.
     env.ledger().with_mut(|li| li.sequence_number += 12_000);
-    let lapsed_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&core_key));
-    assert!(lapsed_ttl <= 8_000 && lapsed_ttl >= 7_990, "expected TTL to have decayed to ~8_000, got {lapsed_ttl}");
+    let lapsed_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&core_key)
+    });
+    assert!(
+        lapsed_ttl <= 8_000 && lapsed_ttl >= 7_990,
+        "expected TTL to have decayed to ~8_000, got {lapsed_ttl}"
+    );
 
     // A plain read — the same lookup a buyer's purchase attempt performs —
     // renews both halves of the record back to the max, with no special
@@ -892,10 +898,12 @@ fn material_ttl_renews_on_read_after_partial_lapse() {
     let record = client.get_material(&material_id);
     assert_eq!(record.material_id, material_id);
 
-    let renewed_core_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&core_key));
-    let renewed_sale_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&sale_key));
+    let renewed_core_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&core_key)
+    });
+    let renewed_sale_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&sale_key)
+    });
     assert_ttl_renewed_to_max(renewed_core_ttl);
     assert_ttl_renewed_to_max(renewed_sale_ttl);
 }
@@ -921,16 +929,18 @@ fn allowed_asset_ttl_renews_on_write() {
     client.set_asset_allowed(&creator, &asset, &AssetKind::Token, &true);
 
     let asset_key = DataKey::AllowedAsset(asset.clone());
-    let initial_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_key));
+    let initial_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&asset_key)
+    });
     assert_ttl_renewed_to_max(initial_ttl);
 
     env.ledger().with_mut(|li| li.sequence_number += 12_000);
 
     // Re-approving the same asset is a write, and renews its TTL.
     client.set_asset_allowed(&creator, &asset, &AssetKind::Token, &true);
-    let renewed_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_key));
+    let renewed_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&asset_key)
+    });
     assert_ttl_renewed_to_max(renewed_ttl);
 }
 
@@ -993,7 +1003,10 @@ fn extend_materials_ttl_is_cursor_based_and_bounded() {
     // enforcement, proves the sweep cannot exceed transaction resource
     // limits regardless of what's requested.
     let next_cursor = client.extend_materials_ttl(&0, &10_000);
-    assert_eq!(next_cursor, 25, "batch should be clamped to MAX_MAINTENANCE_BATCH");
+    assert_eq!(
+        next_cursor, 25,
+        "batch should be clamped to MAX_MAINTENANCE_BATCH"
+    );
 
     // Resuming from the returned cursor covers the remainder.
     let final_cursor = client.extend_materials_ttl(&next_cursor, &10_000);
@@ -1008,8 +1021,9 @@ fn extend_materials_ttl_is_cursor_based_and_bounded() {
             .unwrap()
     });
     let core_key = DataKey::MaterialCore(bootstrap_material_id);
-    let renewed_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&core_key));
+    let renewed_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&core_key)
+    });
     assert_ttl_renewed_to_max(renewed_ttl);
 }
 
@@ -1043,7 +1057,8 @@ fn extend_asset_policy_ttl_is_cursor_based() {
     assert_eq!(final_cursor, 2);
 
     let asset_a_key = DataKey::AllowedAsset(asset_a);
-    let renewed_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_a_key));
+    let renewed_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&asset_a_key)
+    });
     assert_ttl_renewed_to_max(renewed_ttl);
 }
