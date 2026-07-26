@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 
@@ -54,23 +54,78 @@ describe("MarketplaceFilters", () => {
     expect(screen.getByText("Categories")).toBeInTheDocument();
   });
 
-  it("calls onSearchChange when typing in search", async () => {
-    const user = userEvent.setup();
-    const onSearchChange = vi.fn();
-    render(<MarketplaceFilters {...defaultProps} onSearchChange={onSearchChange} />);
+  it("calls onSearchChange once after the debounce interval when typing", () => {
+    vi.useFakeTimers();
+    try {
+      const onSearchChange = vi.fn();
+      const onPageReset = vi.fn();
+      render(
+        <MarketplaceFilters
+          {...defaultProps}
+          onSearchChange={onSearchChange}
+          onPageReset={onPageReset}
+        />,
+      );
 
-    const input = screen.getByPlaceholderText("Search materials...");
-    await user.type(input, "calculus");
-    expect(onSearchChange).toHaveBeenCalled();
+      const input = screen.getByPlaceholderText("Search materials...");
+      fireEvent.change(input, { target: { value: "calculus" } });
+
+      // Input updates immediately, but the query callback waits for the debounce.
+      expect(input).toHaveValue("calculus");
+      expect(onSearchChange).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(onSearchChange).toHaveBeenCalledTimes(1);
+      expect(onSearchChange).toHaveBeenCalledWith("calculus");
+      expect(onPageReset).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
+  it("only fires the debounced search for the final value", () => {
+    vi.useFakeTimers();
+    try {
+      const onSearchChange = vi.fn();
+      render(<MarketplaceFilters {...defaultProps} onSearchChange={onSearchChange} />);
+
+      const input = screen.getByPlaceholderText("Search materials...");
+      fireEvent.change(input, { target: { value: "cal" } });
+      act(() => {
+        vi.advanceTimersByTime(150);
+      });
+      fireEvent.change(input, { target: { value: "calculus" } });
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+
+      expect(onSearchChange).toHaveBeenCalledTimes(1);
+      expect(onSearchChange).toHaveBeenCalledWith("calculus");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("syncs the input when the search query changes externally", () => {
+    const { rerender } = render(<MarketplaceFilters {...defaultProps} searchQuery="algebra" />);
+    const input = screen.getByPlaceholderText("Search materials...");
+    expect(input).toHaveValue("algebra");
+
+    rerender(<MarketplaceFilters {...defaultProps} searchQuery="" />);
+    expect(input).toHaveValue("");
+  });
+
+  // The subject tabs render twice (mobile pills + desktop sidebar); jsdom does
+  // not apply the lg:hidden CSS, so queries must tolerate both instances.
   it("calls onSubjectChange when subject pill clicked", async () => {
     const user = userEvent.setup();
     const onSubjectChange = vi.fn();
     render(<MarketplaceFilters {...defaultProps} onSubjectChange={onSubjectChange} />);
 
-    const sciencePill = screen.getByRole("tab", { name: "Science" });
-    await user.click(sciencePill);
+    const [mobileSciencePill] = screen.getAllByRole("tab", { name: "Science" });
+    await user.click(mobileSciencePill);
     expect(onSubjectChange).toHaveBeenCalledWith("Science");
   });
 
@@ -79,13 +134,13 @@ describe("MarketplaceFilters", () => {
     const onPageReset = vi.fn();
     render(<MarketplaceFilters {...defaultProps} onPageReset={onPageReset} />);
 
-    const sciencePill = screen.getByRole("tab", { name: "Science" });
-    await user.click(sciencePill);
+    const [mobileSciencePill] = screen.getAllByRole("tab", { name: "Science" });
+    await user.click(mobileSciencePill);
     expect(onPageReset).toHaveBeenCalled();
   });
 
   it("shows loading state for subjects", () => {
     render(<MarketplaceFilters {...defaultProps} subjectsLoading={true} />);
-    expect(screen.getByText("Loading subjects...")).toBeInTheDocument();
+    expect(screen.getAllByText("Loading subjects...").length).toBeGreaterThan(0);
   });
 });
