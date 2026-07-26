@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   FaCloudUploadAlt,
   FaCheck,
@@ -12,11 +12,15 @@ import {
   FaDollarSign,
   FaEye,
   FaSpinner,
+  FaExternalLinkAlt,
   FaExclamationTriangle,
 } from "react-icons/fa";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSwitchChain } from "wagmi";
 
 import { useWallet } from "@/hooks/useWallet";
+import { validateThumbnail } from "@/lib/upload/validateThumbnail";
+import { abi } from "../../../../../contracts/EduVaultAbi.js";
+import { parseAbiItem } from "viem";
 import { useCreateMaterial, useUploadFile } from "@/hooks/api/useMaterials";
 import TransactionStatusPanel from "@/components/transactions/TransactionStatusPanel";
 import { useTransactionCenter } from "@/providers/TransactionProvider";
@@ -69,6 +73,8 @@ export default function UploadWizard() {
     clearTransaction,
   } = useTransactionCenter();
 
+  const chainMismatch = address && chainId && !isUploadChain(chainId);
+
   useEffect(() => {
     async function loadTaxonomy() {
       try {
@@ -93,11 +99,25 @@ export default function UploadWizard() {
     }
   };
 
+  // Object URLs must be revoked when replaced or on unmount, or every
+  // selected thumbnail leaks its blob for the lifetime of the page.
+  const thumbUrlRef = useRef(null);
+
+  const replaceThumbPreview = (url) => {
+    if (thumbUrlRef.current) URL.revokeObjectURL(thumbUrlRef.current);
+    thumbUrlRef.current = url;
+    setThumbPreview(url);
+  };
+
+  useEffect(() => () => {
+    if (thumbUrlRef.current) URL.revokeObjectURL(thumbUrlRef.current);
+  }, []);
+
   const handleThumbChange = (e) => {
     const file = e.target.files?.[0];
     if (file) {
       setThumbFile(file);
-      setThumbPreview(URL.createObjectURL(file));
+      replaceThumbPreview(URL.createObjectURL(file));
     }
   };
 
@@ -118,15 +138,10 @@ export default function UploadWizard() {
           setError("Unsupported file format. Please upload a PDF, Word, Excel, PowerPoint, Text, or ZIP file.");
           return false;
         }
-        if (thumbFile) {
-          if (thumbFile.size > 5 * 1024 * 1024) {
-            setError("Thumbnail size exceeds the 5MB limit. Please select a smaller image.");
-            return false;
-          }
-          const thumbExt = thumbFile.name.substring(thumbFile.name.lastIndexOf(".")).toLowerCase();
-          const ALLOWED_THUMB_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"];
-          if (!ALLOWED_THUMB_EXTENSIONS.includes(thumbExt)) {
-            setError("Unsupported thumbnail type. Please upload a JPG, PNG, or WEBP image.");
+        {
+          const thumbCheck = validateThumbnail(thumbFile);
+          if (!thumbCheck.ok) {
+            setError(thumbCheck.error);
             return false;
           }
         }
@@ -164,6 +179,28 @@ export default function UploadWizard() {
     }
   };
 
+  const handleSwitchChain = async () => {
+    setError(null);
+    setSwitchingChain(true);
+    try {
+      await switchChainAsync({ chainId: celoSepolia.id });
+    } catch (err) {
+      if (err.code === "ACTION_REJECTED" || err.message?.includes("User rejected")) {
+        setError("Network switch was rejected. Please switch to Stellar Testnet to publish.");
+        setErrorType("chain");
+      } else if (err.message?.includes("does not support")) {
+        setError("Your wallet does not support switching to Stellar Testnet. Please switch manually.");
+        setErrorType("chain");
+      } else {
+        setError(err.message || "Failed to switch network. Please try manually.");
+        setErrorType("chain");
+      }
+    } finally {
+      setSwitchingChain(false);
+    }
+  };
+
+
   const handleSubmit = async () => {
     setError(null);
     setErrorType(null);
@@ -173,6 +210,13 @@ export default function UploadWizard() {
       setErrorType("wallet");
       return;
     }
+
+    if (chainMismatch) {
+      setError(`Please switch to Stellar Testnet before publishing. Use the network switch button above.`);
+      setErrorType("chain");
+      return;
+    }
+
 
     setWorkflowState("uploading");
     setUploadProgress(0);
@@ -299,7 +343,7 @@ export default function UploadWizard() {
     setDocFile(null);
     setDocFileName(null);
     setThumbFile(null);
-    setThumbPreview(null);
+    replaceThumbPreview(null);
     setCurrentStep(1);
     setWorkflowState("idle");
     setError(null);
@@ -765,7 +809,7 @@ export default function UploadWizard() {
 
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <p className="text-sm text-blue-800">
-                    <strong>Note:</strong> Publishing will make your material available in the marketplace right away.
+                    <strong>Note:</strong> Publishing will mint your material as an NFT on the blockchain. XLM transaction fees will apply.
                   </p>
                 </div>
               </div>
