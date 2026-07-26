@@ -1,6 +1,7 @@
 import { COLLECTIONS } from "../backend/schemaContracts.js";
 import { sendReceiptIfEligible } from "../email.js";
 import { parseContractEvent } from "./eventParser.js";
+import { invalidateEntitlement } from "../entitlement.js";
 
 
 function duplicateKey(error) {
@@ -70,11 +71,13 @@ export async function applyIndexedEvent(db, event, { now = new Date() } = {}) {
         $set: {
           materialId: event.materialId,
           buyerAddress,
+          purchaseId: event.purchaseId ?? null,
           sellerAddress: event.sellerAddress || null,
           chainTxHash: event.transactionHash || event.txHash || null,
           amount: event.amount || null,
           asset: event.asset || null,
           status: "settled",
+          settlementState: "Pending",
           updatedAt: now,
         },
         $setOnInsert: { createdAt: now },
@@ -88,9 +91,13 @@ export async function applyIndexedEvent(db, event, { now = new Date() } = {}) {
         $set: {
           materialId: event.materialId,
           buyerAddress,
+          state: "finalized",
           active: true,
           source: "stellar",
+          purchaseId: event.purchaseId ?? null,
+          settlementState: "Pending",
           chainTxHash: event.transactionHash || event.txHash || null,
+          checkedAt: now,
           updatedAt: now,
         },
         $setOnInsert: { createdAt: now },
@@ -113,6 +120,51 @@ export async function applyIndexedEvent(db, event, { now = new Date() } = {}) {
           payload: { source: 'indexer', purchaseId: purchase._id },
         },
       }).catch(err => console.error(err));
+    }
+  }
+
+  if (event.type === "purchase.refunded") {
+    const buyerAddress = String(event.buyerAddress || "").toLowerCase();
+
+    await db.collection(COLLECTIONS.purchases).updateOne(
+      { materialId: event.materialId, buyerAddress },
+      {
+        $set: {
+          settlementState: "Refunded",
+          refundedAt: now,
+          refundTransactionHash: event.transactionHash || event.txHash || null,
+          updatedAt: now,
+        },
+      }
+    );
+
+    // Chain-confirmed, terminal revocation — invalidate immediately so no
+    // in-flight cached "active" entitlement outlives the refund.
+    await invalidateEntitlement(event.materialId, buyerAddress, "chain-refunded", {
+      db,
+      purchaseId: event.purchaseId,
+      settlementState: "Refunded",
+    });
+  }
+
+  if (event.type === "dispute.opened") {
+    const purchase = await db.collection(COLLECTIONS.purchases).findOne({
+      materialId: event.materialId,
+      purchaseId: event.purchaseId,
+    });
+    const buyerAddress = purchase?.buyerAddress || null;
+
+    await db.collection(COLLECTIONS.purchases).updateOne(
+      { materialId: event.materialId, purchaseId: event.purchaseId },
+      { $set: { settlementState: "Disputed", disputedAt: now, updatedAt: now } }
+    );
+
+    if (buyerAddress) {
+      await invalidateEntitlement(event.materialId, buyerAddress, "chain-disputed", {
+        db,
+        purchaseId: event.purchaseId,
+        settlementState: "Disputed",
+      });
     }
   }
 
