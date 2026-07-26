@@ -1399,6 +1399,17 @@ impl PurchaseManager {
         Self::set_asset_allowed(&env, admin, asset, AssetKind::InstitutionAsset, enabled)
     }
 
+    /// Register the Stellar native asset XLM for checkout (admin only).
+    /// XLM is the native asset of the Stellar network, wrapped via its SAC contract.
+    pub fn register_native_asset(
+        env: Env,
+        admin: Address,
+        asset: Address,
+        enabled: bool,
+    ) -> Result<(), PurchaseError> {
+        Self::set_asset_allowed(&env, admin, asset, AssetKind::Native, enabled)
+    }
+
     /// Configure the price-oracle address (admin only).
     pub fn set_oracle(
         env: Env,

@@ -5,6 +5,7 @@ import Image from "next/image";
 import { AnimatePresence, motion } from "framer-motion";
 import { FaTimes } from "react-icons/fa";
 import { useAccount } from "wagmi";
+import { useWallet } from "@/hooks/useWallet";
 import CheckoutReceiptModal from "../../../../../components/modals/CheckoutReceiptModal";
 import ConnectWalletModal from "./ConnectWalletModal";
 import TransactionStatusPanel from "@/components/transactions/TransactionStatusPanel";
@@ -24,7 +25,7 @@ function useQuote(materialId, asset, price) {
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    if (!materialId || !asset) return undefined;
+    if (!materialId || !asset) return;
 
     const loadingTimer = window.setTimeout(() => {
       setLoading(true);
@@ -75,7 +76,11 @@ export default function BuyNowModal({
   materialCreator,
   onAccessUpdated,
 }) {
-  const { address } = useAccount();
+  const { address: evmAddress } = useAccount();
+  const { state: stellarState } = useWallet();
+  const stellarAddress = stellarState.status === "Connected" ? stellarState.session.address : null;
+  const address = stellarAddress || evmAddress;
+
   const createPurchaseMutation = useCreatePurchase();
   const startAccessRequestMutation = useStartAccessRequest();
   const [showWallet, setShowWallet] = useState(false);
@@ -286,6 +291,13 @@ export default function BuyNowModal({
                     We will create a pending access request first. The material unlocks only after payment is confirmed.
                   </p>
                 </div>
+
+                {address ? (
+                  <div className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                    <p className="text-xs text-slate-500">Connected as</p>
+                    <p className="mt-0.5 font-mono text-sm text-slate-900 break-all">{address}</p>
+                  </div>
+                ) : null}
 
                 {materialTitle ? (
                   <div className="mb-4 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">

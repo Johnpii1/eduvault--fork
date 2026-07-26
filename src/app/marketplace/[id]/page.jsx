@@ -3,31 +3,16 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useState, useEffect } from "react";
-import {
-	FaHeart,
-	FaCheckCircle,
-	FaClock,
-	FaExclamationTriangle,
-	FaTag,
-	FaBookOpen,
-	FaListUl,
-	FaStickyNote,
-	FaImage,
-	FaHistory,
-	FaFlag,
-} from "react-icons/fa";
-import ResourceStatusBadge from "@/components/materials/ResourceStatusBadge";
+import { FaBookOpen, FaListUl, FaStickyNote, FaImage, FaTag, FaCheckCircle } from "react-icons/fa";
 import { motion } from "framer-motion";
-import Navbar from "@/components/Navbar";
-import BuyNowModal from "./modals/BuyNowModal";
 import { useParams } from "next/navigation";
+import { useAccount } from "wagmi";
 import { useMaterialDetail } from "@/hooks/api/useMaterials";
 import { useEntitlement } from "@/hooks/api/useEntitlements";
 import { QueryStateProvider } from "@/components/common/QueryStateProvider";
 import Web3ErrorBoundary from "@/components/web3/Web3ErrorBoundary";
-import SaveMaterialButton from "@/components/materials/SaveMaterialButton";
-import ShareMaterialButton from "@/components/materials/ShareMaterialButton";
-import { trackRecentlyViewed } from "@/hooks/useRecentlyViewed";
+import Navbar from "@/components/Navbar";
+import ResourceStatusBadge from "@/components/materials/ResourceStatusBadge";
 import RecommendedMaterials from "@/components/materials/RecommendedMaterials";
 import MaterialReviewPanel from "@/components/materials/MaterialReviewPanel";
 import LearnerNotes from "@/components/materials/LearnerNotes";
@@ -401,383 +386,308 @@ function RevisionHistoryPanel({ history, currentVersion }) {
 	);
 }
 
+import { trackRecentlyViewed } from "@/hooks/useRecentlyViewed";
+import BuyNowModal from "./modals/BuyNowModal";
+import PreviewBlock from "./components/PreviewBlock";
+import PreviewStat from "./components/PreviewStat";
+import CreatorCard from "./components/CreatorCard";
+import PurchaseCard from "./components/PurchaseCard";
+import RevisionHistoryPanel from "./components/RevisionHistoryPanel";
+import ReportModal from "./components/ReportModal";
+import { useMaterialHistory } from "./hooks/useMaterialHistory";
+import { getPreviewImage, getPreviewCounts, hasCoverImage } from "./components/utils";
 
 export default function MaterialDetailsPage() {
-	const params = useParams();
-	const id = String(params.id);
-	const [showBuyModal, setShowBuyModal] = useState(false);
-	const [showReportModal, setShowReportModal] = useState(false);
-	const [history, setHistory] = useState([]);
-	const materialQuery = useMaterialDetail(id);
-	const entitlementQuery = useEntitlement(id);
-	const { address } = useAccount();
-	const [downloadError, setDownloadError] = useState(null);
-	const [isDownloading, setIsDownloading] = useState(false);
+  const params = useParams();
+  const id = String(params.id);
+  const [showBuyModal, setShowBuyModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [downloadError, setDownloadError] = useState(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const materialQuery = useMaterialDetail(id);
+  const entitlementQuery = useEntitlement(id);
+  const { data: history } = useMaterialHistory(id);
+  const { address } = useAccount();
 
-	useEffect(() => {
-		if (id) {
-			fetch(`/api/materials/history?id=${id}`)
-				.then((res) => res.json())
-				.then((data) => {
-					if (Array.isArray(data)) {
-						setHistory(data);
-					}
-				})
-				.catch((err) => console.error("Error fetching material history:", err));
-		}
-	}, [id]);
+  const accessStatus = !address
+    ? "wallet_required"
+    : entitlementQuery.data?.status || (entitlementQuery.isLoading ? "checking" : "not_purchased");
+  const isOwned =
+    accessStatus === "active" ||
+    Boolean(address && (entitlementQuery.data?.owned || entitlementQuery.data?.hasAccess));
 
-	const accessStatus = !address
-		? "wallet_required"
-		: entitlementQuery.data?.status || (entitlementQuery.isLoading ? "checking" : "not_purchased");
-	const isOwned =
-		accessStatus === "active" ||
-		Boolean(address && (entitlementQuery.data?.owned || entitlementQuery.data?.hasAccess));
+  const handleDownload = async () => {
+    if (!address) {
+      setShowBuyModal(true);
+      return;
+    }
+    setIsDownloading(true);
+    setDownloadError(null);
+    try {
+      const query = new URLSearchParams({ materialId: id, buyerAddress: address });
+      const response = await fetch(`/api/download?${query.toString()}`);
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.detail || payload?.error || "Unable to request material access.");
+      }
+      if (payload.fileUrl) {
+        window.open(payload.fileUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Unable to request material access.");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
-	const handleDownload = async () => {
-		if (!address) {
-			setShowBuyModal(true);
-			return;
-		}
+  useEffect(() => {
+    if (materialQuery.data) {
+      trackRecentlyViewed(materialQuery.data);
+    }
+  }, [materialQuery.data]);
 
-		setIsDownloading(true);
-		setDownloadError(null);
+  return (
+    <>
+      <Navbar />
+      <main className="relative bg-[#fffaf6] min-h-screen py-6 sm:py-10 px-4 sm:px-6 md:px-10 lg:px-20">
+        <div
+          className="absolute inset-0 bg-[linear-gradient(to_right,#f2ede8_1px,transparent_1px),linear-gradient(to_bottom,#f2ede8_1px,transparent_1px)] bg-[size:40px_40px] opacity-70 pointer-events-none -z-10"
+          aria-hidden="true"
+        />
+        <QueryStateProvider query={materialQuery}>
+          {(material) => {
+            const counts = getPreviewCounts(material);
+            return (
+              <motion.div
+                initial={{ opacity: 0, y: 40 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6 }}
+                aria-live="polite"
+                className="max-w-6xl mx-auto"
+              >
+                <nav aria-label="Breadcrumb" className="mb-4 sm:mb-6">
+                  <p className="text-xs sm:text-sm text-gray-500 break-words">
+                    <Link
+                      href="/marketplace"
+                      className="text-blue-600 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 rounded-sm"
+                    >
+                      Marketplace
+                    </Link>{" "}
+                    &rarr; <span className="text-gray-700">{material.title}</span>
+                  </p>
+                </nav>
 
-		try {
-			const query = new URLSearchParams({ materialId: id, buyerAddress: address });
-			const response = await fetch(`/api/download?${query.toString()}`);
-			const payload = await response.json();
+                <header className="mb-6 sm:mb-8">
+                  <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 break-words">
+                    {material.title}
+                  </h1>
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <ResourceStatusBadge material={material} />
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-blue-700 bg-blue-50 border border-blue-200">
+                      Current Revision: v{material.version || 1}
+                    </span>
+                  </div>
+                  <p className="mt-3 text-sm sm:text-base text-gray-600 leading-relaxed max-w-3xl break-words">
+                    {material.shortSummary || material.description || "Creator preview not shared yet."}
+                  </p>
+                  {material.tags?.length ? (
+                    <div className="mt-4 flex flex-wrap gap-2" role="list">
+                      {material.tags.map((tag, i) => (
+                        <span
+                          key={i}
+                          role="listitem"
+                          className="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-700 px-3 py-1 rounded-full"
+                        >
+                          <FaTag aria-hidden="true" className="text-[10px] text-gray-400" />
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </header>
 
-			if (!response.ok) {
-				throw new Error(payload?.detail || payload?.error || "Unable to request material access.");
-			}
+                <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 lg:gap-8 items-start">
+                  <div className="space-y-6 lg:space-y-8 min-w-0 order-2 lg:order-1">
+                    <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-200">
+                      <Image
+                        src={getPreviewImage(material)}
+                        alt={material.title}
+                        width={800}
+                        height={600}
+                        className="w-full h-56 sm:h-72 md:h-[380px] object-cover"
+                      />
+                    </div>
 
-			if (payload.fileUrl) {
-				window.open(payload.fileUrl, "_blank", "noopener,noreferrer");
-			}
-		} catch (err) {
-			setDownloadError(err instanceof Error ? err.message : "Unable to request material access.");
-		} finally {
-			setIsDownloading(false);
-		}
-	};
+                    <section aria-labelledby="preview-summary-heading" className="space-y-3">
+                      <h2 id="preview-summary-heading" className="text-base sm:text-lg font-semibold text-gray-900">
+                        What you will get
+                      </h2>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+                        <PreviewStat label="Cover image" value={hasCoverImage(material) ? "Provided" : "Missing"} icon={FaImage} />
+                        <PreviewStat label="Learning outcomes" value={`${counts.outcomes} shared`} icon={FaBookOpen} />
+                        <PreviewStat label="Table of contents" value={`${counts.sections} sections`} icon={FaListUl} />
+                        <PreviewStat label="Sample notes" value={`${counts.notes} included`} icon={FaStickyNote} />
+                      </div>
+                    </section>
 
-	useEffect(() => {
-		if (materialQuery.data) {
-			trackRecentlyViewed(materialQuery.data);
-		}
-	}, [materialQuery.data]);
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 lg:gap-6">
+                      <section className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-sm">
+                        <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">About</h2>
+                        <p className="text-sm text-gray-600 leading-relaxed break-words">
+                          {material.shortSummary || material.description}
+                        </p>
+                      </section>
+                      <CreatorCard author={material.author} creator={material.creator} createdAt={material.createdAt} />
+                    </div>
 
-	return (
-		<>
-			<Navbar />
+                    <div className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-sm">
+                      <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">Performance Summary</h2>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <div className="rounded-xl bg-blue-50 p-4">
+                          <p className="text-[10px] text-gray-500 font-bold tracking-wider uppercase">Views</p>
+                          <p className="mt-1 text-2xl font-bold text-blue-600">{material.viewCount || 0}</p>
+                        </div>
+                        <div className="rounded-xl bg-emerald-50 p-4">
+                          <p className="text-[10px] text-gray-500 font-bold tracking-wider uppercase">Saves</p>
+                          <p className="mt-1 text-2xl font-bold text-emerald-600">{material.saveCount || 0}</p>
+                        </div>
+                        <div className="rounded-xl bg-amber-50 p-4">
+                          <p className="text-[10px] text-gray-500 font-bold tracking-wider uppercase">Requests</p>
+                          <p className="mt-1 text-2xl font-bold text-amber-600">{material.accessCount || 0}</p>
+                        </div>
+                        <div className="rounded-xl bg-pink-50 p-4">
+                          <p className="text-[10px] text-gray-500 font-bold tracking-wider uppercase">Likes</p>
+                          <p className="mt-1 text-2xl font-bold text-pink-600">{material.likes || 0}</p>
+                        </div>
+                      </div>
+                    </div>
 
-			<main className="relative bg-[#fffaf6] min-h-screen py-6 sm:py-10 px-4 sm:px-6 md:px-10 lg:px-20">
-				{/* Background grid pattern */}
-				<div
-					className="absolute inset-0 bg-[linear-gradient(to_right,#f2ede8_1px,transparent_1px),linear-gradient(to_bottom,#f2ede8_1px,transparent_1px)] bg-[size:40px_40px] opacity-70 pointer-events-none -z-10"
-					aria-hidden="true"
-				/>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 lg:gap-6">
+                      <PreviewBlock title="Learning outcomes" emptyLabel="The creator has not added learning outcomes yet." items={material.learningOutcomes} icon={FaBookOpen} />
+                      <PreviewBlock title="Table of contents" emptyLabel="The creator has not shared a table of contents yet." items={material.tableOfContents} icon={FaListUl} />
+                      <PreviewBlock title="Sample notes" emptyLabel="No sample notes were shared for this listing." items={material.sampleNotes} icon={FaStickyNote} />
 
-				<QueryStateProvider query={materialQuery}>
-					{(material) => {
-						const counts = getPreviewCounts(material);
+                      <section className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-sm h-full">
+                        <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">On-chain verification</h2>
+                        <p className="text-sm text-gray-600 leading-relaxed mb-4">
+                          EduVault publishes marketplace metadata through Soroban contracts so buyers can verify authenticity before paying.
+                        </p>
+                        <p className="flex items-center gap-2 text-sm">
+                          <strong className="text-gray-800">Status:</strong>
+                          {material.verified ? (
+                            <span className="text-green-700 flex items-center gap-1 text-xs font-semibold">
+                              <FaCheckCircle aria-hidden="true" /> Ready for Soroban
+                            </span>
+                          ) : (
+                            <span className="text-amber-700 text-xs font-semibold">Not verified yet</span>
+                          )}
+                        </p>
+                      </section>
 
-						return (
-							<motion.div
-								initial={{ opacity: 0, y: 40 }}
-								animate={{ opacity: 1, y: 0 }}
-								transition={{ duration: 0.6 }}
-								aria-live="polite"
-								className="max-w-6xl mx-auto"
-							>
-								{/* Breadcrumb */}
-								<nav aria-label="Breadcrumb" className="mb-4 sm:mb-6">
-									<p className="text-xs sm:text-sm text-gray-500 break-words">
-										<Link
-											href="/marketplace"
-											className="text-blue-600 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 rounded-sm"
-										>
-											Marketplace
-										</Link>{" "}
-										→ <span className="text-gray-700">{material.title}</span>
-									</p>
-								</nav>
+                      <div className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-sm h-full">
+                        <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">Resource Details</h2>
+                        <dl className="space-y-3 text-sm">
+                          {material.category && (
+                            <div className="flex justify-between items-center">
+                              <dt className="text-gray-500 font-medium">Category</dt>
+                              <dd className="text-gray-800 font-semibold capitalize">{material.category}</dd>
+                            </div>
+                          )}
+                          {material.subject && (
+                            <div className="flex justify-between items-center">
+                              <dt className="text-gray-500 font-medium">Subject</dt>
+                              <dd className="text-gray-800 font-semibold">{material.subject}</dd>
+                            </div>
+                          )}
+                          {material.level && (
+                            <div className="flex justify-between items-center">
+                              <dt className="text-gray-500 font-medium">Level</dt>
+                              <dd className="text-gray-800 font-semibold capitalize">{material.level}</dd>
+                            </div>
+                          )}
+                          <div className="flex justify-between items-center">
+                            <dt className="text-gray-500 font-medium">File Type</dt>
+                            <dd className="text-gray-800 font-semibold uppercase">{material.fileType || "PDF"}</dd>
+                          </div>
+                          {material.pages && (
+                            <div className="flex justify-between items-center">
+                              <dt className="text-gray-500 font-medium">Pages</dt>
+                              <dd className="text-gray-800 font-semibold">{material.pages}</dd>
+                            </div>
+                          )}
+                          <div className="flex justify-between items-center">
+                            <dt className="text-gray-500 font-medium">Visibility</dt>
+                            <dd className="text-gray-800 font-semibold capitalize">{material.visibility || "Public"}</dd>
+                          </div>
+                        </dl>
+                      </div>
+                    </div>
 
-								{/* Page header (title) */}
-								<header className="mb-6 sm:mb-8">
-									<h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 break-words">
-										{material.title}
-									</h1>
-									<div className="mt-3 flex flex-wrap items-center gap-3">
-										<ResourceStatusBadge material={material} />
-										<span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-blue-700 bg-blue-50 border border-blue-200">
-											Current Revision: v{material.version || 1}
-										</span>
-									</div>
-									<p className="mt-3 text-sm sm:text-base text-gray-600 leading-relaxed max-w-3xl break-words">
-										{material.shortSummary || material.description || "Creator preview not shared yet."}
-									</p>
-									{material.tags?.length ? (
-										<div className="mt-4 flex flex-wrap gap-2" role="list">
-											{material.tags.map((tag, i) => (
-												<span
-													key={i}
-													role="listitem"
-													className="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-700 px-3 py-1 rounded-full"
-												>
-													<FaTag aria-hidden="true" className="text-[10px] text-gray-400" />
-													#{tag}
-												</span>
-											))}
-										</div>
-									) : null}
-								</header>
+                    <RevisionHistoryPanel history={history || []} currentVersion={material.version} />
 
-								{/* Main two-column area (mobile: purchase card first, lg+: content left + sticky card right) */}
-								<div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 lg:gap-8 items-start">
-									{/* LEFT: preview + content */}
-									<div className="space-y-6 lg:space-y-8 min-w-0 order-2 lg:order-1">
-										{/* Preview hero image */}
-										<div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-200">
-											<Image
-												src={getPreviewImage(material)}
-												alt={material.title}
-												width={800}
-												height={600}
-												className="w-full h-56 sm:h-72 md:h-[380px] object-cover"
-											/>
-										</div>
+                    <MaterialReviewPanel
+                      materialId={id}
+                      initialReviews={material.reviews || material.reviewHistory || []}
+                      entitlement={entitlementQuery}
+                      currentAddress={address}
+                      creatorAddress={material.userAddress || material.ownerAddress || material.creatorAddress || material.author?.walletAddress}
+                    />
+                  </div>
 
-										{/* Preview stat grid */}
-										<section aria-labelledby="preview-summary-heading" className="space-y-3">
-											<h2 id="preview-summary-heading" className="text-base sm:text-lg font-semibold text-gray-900">
-												What you will get
-											</h2>
-											<div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-												<PreviewStat
-													label="Cover image"
-													value={hasCoverImage(material) ? "Provided" : "Missing"}
-													icon={FaImage}
-												/>
-												<PreviewStat
-													label="Learning outcomes"
-													value={`${counts.outcomes} shared`}
-													icon={FaBookOpen}
-												/>
-												<PreviewStat
-													label="Table of contents"
-													value={`${counts.sections} sections`}
-													icon={FaListUl}
-												/>
-												<PreviewStat
-													label="Sample notes"
-													value={`${counts.notes} included`}
-													icon={FaStickyNote}
-												/>
-											</div>
-										</section>
+                  <div className="order-1 lg:order-2">
+                    <PurchaseCard
+                      material={material}
+                      accessStatus={accessStatus}
+                      entitlementQuery={entitlementQuery}
+                      address={address}
+                      isOwned={isOwned}
+                      isDownloading={isDownloading}
+                      downloadError={downloadError}
+                      onDownload={handleDownload}
+                      onRequestAccess={() => setShowBuyModal(true)}
+                      onAddToCart={() => setShowBuyModal(true)}
+                      onReport={() => setShowReportModal(true)}
+                    />
+                  </div>
+                </div>
 
-										{/* About + Creator */}
-										<div className="grid grid-cols-1 md:grid-cols-2 gap-5 lg:gap-6">
-											<section className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-sm">
-												<h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">
-													About
-												</h2>
-												<p className="text-sm text-gray-600 leading-relaxed break-words">
-													{material.shortSummary || material.description}
-												</p>
-											</section>
+                {materialQuery.data && (
+                  <div className="mt-12 sm:mt-14">
+                    <RecommendedMaterials
+                      currentId={id}
+                      subject={materialQuery.data.subject}
+                      category={materialQuery.data.category}
+                      level={materialQuery.data.level}
+                      creator={materialQuery.data.author || materialQuery.data.creator}
+                    />
+                  </div>
+                )}
+              </motion.div>
+            );
+          }}
+        </QueryStateProvider>
+      </main>
 
-											<CreatorCard
-												author={material.author}
-												creator={material.creator}
-												createdAt={material.createdAt}
-											/>
-										</div>
+      {materialQuery.data && (
+        <Web3ErrorBoundary onRetry={() => setShowBuyModal(false)}>
+          <BuyNowModal
+            isOpen={showBuyModal}
+            onClose={() => setShowBuyModal(false)}
+            price={materialQuery.data.price}
+            materialId={id}
+            materialTitle={materialQuery.data.title}
+            materialCreator={materialQuery.data.author?.name || materialQuery.data.creator || "Unknown"}
+            onAccessUpdated={() => entitlementQuery.refetch()}
+          />
+        </Web3ErrorBoundary>
+      )}
 
-										{/* Performance Summary */}
-										<div className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-sm">
-											<h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">Performance Summary</h2>
-											<div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-												<div className="rounded-xl bg-blue-50 p-4">
-													<p className="text-[10px] text-gray-500 font-bold tracking-wider uppercase">Views</p>
-													<p className="mt-1 text-2xl font-bold text-blue-600">{material.viewCount || 0}</p>
-												</div>
-												<div className="rounded-xl bg-emerald-50 p-4">
-													<p className="text-[10px] text-gray-500 font-bold tracking-wider uppercase">Saves</p>
-													<p className="mt-1 text-2xl font-bold text-emerald-600">{material.saveCount || 0}</p>
-												</div>
-												<div className="rounded-xl bg-amber-50 p-4">
-													<p className="text-[10px] text-gray-500 font-bold tracking-wider uppercase">Requests</p>
-													<p className="mt-1 text-2xl font-bold text-amber-600">{material.accessCount || 0}</p>
-												</div>
-												<div className="rounded-xl bg-pink-50 p-4">
-													<p className="text-[10px] text-gray-500 font-bold tracking-wider uppercase">Likes</p>
-													<p className="mt-1 text-2xl font-bold text-pink-600">{material.likes || 0}</p>
-												</div>
-											</div>
-										</div>
-
-										{/* Preview blocks */}
-										<div className="grid grid-cols-1 md:grid-cols-2 gap-5 lg:gap-6">
-											<PreviewBlock
-												title="Learning outcomes"
-												emptyLabel="The creator has not added learning outcomes yet."
-												items={material.learningOutcomes}
-												icon={FaBookOpen}
-											/>
-											<PreviewBlock
-												title="Table of contents"
-												emptyLabel="The creator has not shared a table of contents yet."
-												items={material.tableOfContents}
-												icon={FaListUl}
-											/>
-											<PreviewBlock
-												title="Sample notes"
-												emptyLabel="No sample notes were shared for this listing."
-												items={material.sampleNotes}
-												icon={FaStickyNote}
-											/>
-
-											{/* On-chain verification */}
-											<section className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-sm h-full">
-												<h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">
-													On-chain verification
-												</h2>
-												<p className="text-sm text-gray-600 leading-relaxed mb-4">
-													EduVault publishes marketplace metadata through Soroban contracts so
-													buyers can verify authenticity before paying.
-												</p>
-												<p className="flex items-center gap-2 text-sm">
-													<strong className="text-gray-800">Status:</strong>
-													{material.verified ? (
-														<span className="text-green-700 flex items-center gap-1 text-xs font-semibold">
-															<FaCheckCircle aria-hidden="true" />
-															Ready for Soroban
-														</span>
-													) : (
-														<span className="text-amber-700 text-xs font-semibold">
-															Not verified yet
-														</span>
-													)}
-												</p>
-											</section>
-
-											{/* Resource Details */}
-											<div className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-sm h-full">
-												<h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">
-													Resource Details
-												</h2>
-												<dl className="space-y-3 text-sm">
-													{material.category && (
-														<div className="flex justify-between items-center">
-															<dt className="text-gray-500 font-medium">Category</dt>
-															<dd className="text-gray-800 font-semibold capitalize">{material.category}</dd>
-														</div>
-													)}
-													{material.subject && (
-														<div className="flex justify-between items-center">
-															<dt className="text-gray-500 font-medium">Subject</dt>
-															<dd className="text-gray-800 font-semibold">{material.subject}</dd>
-														</div>
-													)}
-													{material.level && (
-														<div className="flex justify-between items-center">
-															<dt className="text-gray-500 font-medium">Level</dt>
-															<dd className="text-gray-800 font-semibold capitalize">{material.level}</dd>
-														</div>
-													)}
-													<div className="flex justify-between items-center">
-														<dt className="text-gray-500 font-medium">File Type</dt>
-														<dd className="text-gray-800 font-semibold uppercase">{material.fileType || "PDF"}</dd>
-													</div>
-													{material.pages && (
-														<div className="flex justify-between items-center">
-															<dt className="text-gray-500 font-medium">Pages</dt>
-															<dd className="text-gray-800 font-semibold">{material.pages}</dd>
-														</div>
-													)}
-													<div className="flex justify-between items-center">
-														<dt className="text-gray-500 font-medium">Visibility</dt>
-														<dd className="text-gray-800 font-semibold capitalize">{material.visibility || "Public"}</dd>
-													</div>
-												</dl>
-											</div>
-										</div>
-
-										<RevisionHistoryPanel
-											history={history}
-											currentVersion={material.version}
-										/>
-
-										<MaterialReviewPanel
-											materialId={id}
-											initialReviews={material.reviews || material.reviewHistory || []}
-											entitlement={entitlementQuery}
-											currentAddress={address}
-											creatorAddress={material.userAddress || material.ownerAddress || material.creatorAddress || material.author?.walletAddress}
-										/>
-									</div>
-
-									{/* RIGHT: sticky purchase card (first on mobile for early CTA visibility) */}
-									<div className="order-1 lg:order-2">
-										<PurchaseCard
-											material={material}
-											accessStatus={accessStatus}
-											entitlementQuery={entitlementQuery}
-											address={address}
-											isOwned={isOwned}
-											isDownloading={isDownloading}
-											downloadError={downloadError}
-											onDownload={handleDownload}
-											onRequestAccess={() => setShowBuyModal(true)}
-											onAddToCart={() => setShowBuyModal(true)}
-											onReport={() => setShowReportModal(true)}
-										/>
-									</div>
-								</div>
-
-								{/* Recommendations */}
-								{materialQuery.data && (
-									<div className="mt-12 sm:mt-14">
-										<RecommendedMaterials
-											currentId={id}
-											subject={materialQuery.data.subject}
-											category={materialQuery.data.category}
-											level={materialQuery.data.level}
-											creator={materialQuery.data.author || materialQuery.data.creator}
-										/>
-									</div>
-								)}
-							</motion.div>
-						);
-					}}
-				</QueryStateProvider>
-			</main>
-
-			{materialQuery.data && (
-				<Web3ErrorBoundary onRetry={() => setShowBuyModal(false)}>
-					<BuyNowModal
-						isOpen={showBuyModal}
-						onClose={() => setShowBuyModal(false)}
-						price={materialQuery.data.price}
-						materialId={id}
-						materialTitle={materialQuery.data.title}
-						materialCreator={
-							materialQuery.data.author?.name || materialQuery.data.creator || "Unknown"
-						}
-						onAccessUpdated={() => entitlementQuery.refetch()}
-					/>
-				</Web3ErrorBoundary>
-			)}
-
-			<ReportModal
-				isOpen={showReportModal}
-				onClose={() => setShowReportModal(false)}
-				materialId={id}
-				materialTitle={materialQuery.data?.title || ""}
-			/>
-		</>
-	);
+      <ReportModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        materialId={id}
+        materialTitle={materialQuery.data?.title || ""}
+      />
+    </>
+  );
 }
