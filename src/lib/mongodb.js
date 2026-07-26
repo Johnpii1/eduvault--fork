@@ -112,6 +112,8 @@ async function ensureIndexes(db) {
       "[Database Index Error]: Failed to create MongoDB indexes:",
       error,
     );
+  }
+
   for (const [collectionName, indexes] of Object.entries(REQUIRED_INDEXES)) {
     const collection = db.collection(collectionName);
     for (const { keys, options } of indexes) {
