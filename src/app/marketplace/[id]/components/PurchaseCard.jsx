@@ -21,7 +21,7 @@ function PurchaseCard({
   onReport,
 }) {
   return (
-    <aside className="bg-white border border-gray-200 rounded-3xl p-5 sm:p-6 shadow-sm space-y-5 lg:sticky lg:top-24">
+    <aside className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-3xl p-5 sm:p-6 shadow-sm space-y-5 lg:sticky lg:top-24">
       <div className="space-y-3">
         <PriceLine
           price={material.price}
@@ -54,7 +54,7 @@ function PurchaseCard({
           <>
             <button
               type="button"
-              className="w-full sm:w-auto sm:flex-1 px-6 py-2 border border-gray-300 text-gray-700 font-semibold rounded-md hover:bg-gray-100 transition focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="w-full sm:w-auto sm:flex-1 px-6 py-2 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 font-semibold rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition focus-visible:ring-2 focus-visible:ring-blue-500"
               onClick={onAddToCart}
             >
               Buy now
@@ -71,12 +71,12 @@ function PurchaseCard({
       </div>
 
       {downloadError ? (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {downloadError}
         </p>
       ) : null}
 
-      <div className="flex items-center justify-between text-sm text-gray-500 pt-3 border-t border-gray-100">
+      <div className="flex items-center justify-between text-sm text-gray-500 dark:text-gray-400 pt-3 border-t border-gray-100 dark:border-gray-800">
         <div className="flex items-center gap-2">
           <FaHeart className="text-pink-500" aria-hidden="true" />
           <span>{material.likes || 0} likes</span>
@@ -84,7 +84,7 @@ function PurchaseCard({
         <button
           type="button"
           onClick={onReport}
-          className="flex items-center gap-1.5 text-gray-400 hover:text-red-600 transition duration-150 font-medium"
+          className="flex items-center gap-1.5 text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 transition duration-150 font-medium"
         >
           <FaFlag className="text-xs" aria-hidden="true" />
           <span>Report quality issue</span>
