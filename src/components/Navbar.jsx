@@ -14,6 +14,7 @@ import { WalletStatus } from "@/providers/WalletProvider";
 import { FaShoppingCart, FaExternalLinkAlt, FaCopy, FaCheck } from "react-icons/fa";
 import { getExplorerAccountUrl } from "@/lib/config/chain";
 import NotificationCenter from "./notifications/NotificationCenter";
+import NetworkWarning from "./NetworkWarning";
 
 export default function Navbar() {
 	const [menuOpen, setMenuOpen] = useState(false);
@@ -50,10 +51,13 @@ export default function Navbar() {
 
 	return (
 		<header 
-			className={`fixed top-0 left-0 right-0 flex justify-center py-4 px-4 md:px-0 z-[100] transition-all duration-300 ${
-				scrolled ? "bg-white/10 backdrop-blur-xl py-3" : "bg-transparent"
+			className={`fixed top-0 left-0 right-0 flex flex-col items-center py-2 px-4 md:px-0 z-[100] transition-all duration-300 ${
+				scrolled ? "bg-white/10 backdrop-blur-xl py-2" : "bg-transparent"
 			}`}
 		>
+			<div className="w-full md:w-[90%] lg:w-[85%] max-w-6xl mb-1 hidden sm:block">
+				<NetworkWarning />
+			</div>
 			<motion.nav
 				initial={{ y: -40, opacity: 0 }}
 				animate={{ y: 0, opacity: 1 }}

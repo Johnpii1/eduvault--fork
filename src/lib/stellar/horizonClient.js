@@ -202,6 +202,43 @@ export async function getDynamicBaseFee(tier = 'medium') {
   const optimalFees = calculateOptimalFees(feeStats);
   
   return optimalFees[tier] || optimalFees.medium;
+}
+
+/**
+ * Measure RPC node latency for Horizon server endpoints.
+ * @param {string} [endpointUrl]
+ * @returns {Promise<{ url: string, latencyMs: number | null, isOnline: boolean, status: 'green'|'yellow'|'red' }>}
+ */
+export async function measureNodeLatency(endpointUrl = PRIMARY_URL) {
+  const start = Date.now();
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const response = await fetch(`${endpointUrl.replace(/\/$/, '')}/fee_stats`, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: { 'Accept': 'application/json' },
+    });
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      return { url: endpointUrl, latencyMs: null, isOnline: false, status: 'red' };
+    }
+    
+    const latencyMs = Date.now() - start;
+    let status = 'green';
+    if (latencyMs >= 800) {
+      status = 'red';
+    } else if (latencyMs >= 300) {
+      status = 'yellow';
+    }
+
+    return { url: endpointUrl, latencyMs, isOnline: true, status };
+  } catch {
+    return { url: endpointUrl, latencyMs: null, isOnline: false, status: 'red' };
+  }
+}
+
 const KNOWN_USDC_ISSUERS = {
   testnet: 'GBBD47IF6LWK7P7MDEVSCWRZDPOVPOFWLYERWFBN4JSE3OUQTISLV5EX',
   mainnet: 'GA5ZSEJYB37JDD5G3LYVYF77RD7QFGHSXPJNKXJFUMIVYQ33HE6IGM4Y',
