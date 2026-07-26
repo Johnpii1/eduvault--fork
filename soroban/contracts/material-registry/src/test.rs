@@ -1047,3 +1047,108 @@ fn extend_asset_policy_ttl_is_cursor_based() {
         env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_a_key));
     assert_ttl_renewed_to_max(renewed_ttl);
 }
+
+// ============== Pause / Active / Deactivate lifecycle (Issue #411) ==============
+
+#[test]
+fn pause_active_and_toggle_helpers_track_material_status() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let material_id = client.register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 4),
+        &bytes32(&env, 5),
+        &default_quotes(&env),
+        &default_payout_shares(&env),
+    );
+
+    // Freshly registered material is active and unpaused.
+    assert!(!client.is_material_paused(&material_id));
+
+    // Pause via the boolean helper.
+    client.set_material_paused(&creator, &material_id, &true);
+    assert!(client.is_material_paused(&material_id));
+    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Paused);
+
+    // Reactivate via set_material_active.
+    client.set_material_active(&creator, &material_id, &true);
+    assert!(!client.is_material_paused(&material_id));
+    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Active);
+
+    // Toggle flips the current pause state.
+    client.toggle_material_paused(&creator, &material_id);
+    assert!(client.is_material_paused(&material_id));
+    client.toggle_material_paused(&creator, &material_id);
+    assert!(!client.is_material_paused(&material_id));
+}
+
+#[test]
+fn deactivating_material_archives_then_restores_status() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let material_id = client.register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 4),
+        &bytes32(&env, 5),
+        &default_quotes(&env),
+        &default_payout_shares(&env),
+    );
+
+    // Deactivating archives the material.
+    client.set_material_deactivated(&creator, &material_id, &true);
+    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Archived);
+
+    // Reactivating an unpaused material returns it to Active.
+    client.set_material_deactivated(&creator, &material_id, &false);
+    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Active);
+}
+
+#[test]
+fn get_material_and_get_quote_reject_unknown_material() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+
+    let unknown_id = bytes32(&env, 200);
+    let asset = Address::generate(&env);
+
+    assert_eq!(
+        client.try_get_material(&unknown_id),
+        Err(Ok(RegistryError::MaterialNotFound))
+    );
+    assert_eq!(
+        client.try_get_quote(&unknown_id, &asset),
+        Err(Ok(RegistryError::MaterialNotFound))
+    );
+}
+
+#[test]
+fn non_creator_cannot_change_material_status() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let material_id = client.register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 4),
+        &bytes32(&env, 5),
+        &default_quotes(&env),
+        &default_payout_shares(&env),
+    );
+
+    // A stranger who is neither the creator nor the upgrade-admin is rejected,
+    // and the material's status is left untouched.
+    let stranger = Address::generate(&env);
+    let result = client.try_set_material_status(&stranger, &material_id, &MaterialStatus::Paused);
+    assert_eq!(result, Err(Ok(RegistryError::NotAuthorized)));
+    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Active);
+}
