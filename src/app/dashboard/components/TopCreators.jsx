@@ -29,7 +29,7 @@ export default function TopCreators() {
 						{creators.map((c, i) => (
 							<Link
 								key={i}
-								href={`/creator/${c.name.toLowerCase().replace(" ", "-")}`}
+								href={`/creator/${c.walletAddress}`}
 								className="flex justify-between items-center hover:bg-gray-50 p-2 -mx-2 rounded-lg transition-colors group"
 							>
 								<div className="flex items-center gap-3">
