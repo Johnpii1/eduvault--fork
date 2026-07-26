@@ -217,6 +217,12 @@ const KNOWN_USDC_ISSUERS = {
  * @returns {Promise<{ hasTrustline: boolean, balance?: string, issuer?: string }>}
  */
 export async function checkBuyerTrustline(publicKey, assetCode, issuerAddress) {
+  if (assetCode === 'XLM') {
+    const account = await loadAccount(publicKey);
+    const nativeBalance = account.balances.find((b) => b.asset_type === 'native');
+    return { hasTrustline: true, balance: nativeBalance?.balance ?? '0', issuer: null };
+  }
+
   const issuer = issuerAddress || process.env.NEXT_PUBLIC_USDC_ISSUER
     || KNOWN_USDC_ISSUERS[isMainnet ? 'mainnet' : 'testnet'];
 

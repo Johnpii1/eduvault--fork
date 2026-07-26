@@ -2310,3 +2310,119 @@ fn test_disable_asset() {
     let asset_info = client.get_asset_info(&usdc_address);
     assert_eq!(asset_info, Some(AssetInfo { kind: AssetKind::Token, enabled: false }));
 }
+
+#[test]
+fn test_register_native_asset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::random(&env);
+    let treasury = Address::random(&env);
+    let registry = env.register(MockRegistry, ());
+
+    let contract_id = env.register(PurchaseManager, ());
+    let client = PurchaseManagerClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &registry, &treasury, &500);
+
+    let native_asset = Address::random(&env);
+
+    client.register_native_asset(&admin, &native_asset, &true);
+
+    let asset_info = client.get_asset_info(&native_asset);
+    assert_eq!(asset_info, Some(AssetInfo { kind: AssetKind::Native, enabled: true }));
+
+    assert!(client.is_asset_allowed(&native_asset));
+}
+
+#[test]
+fn test_native_asset_purchase() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let buyer = Address::random(&env);
+    let creator = Address::random(&env);
+    let admin = Address::random(&env);
+    let treasury = Address::random(&env);
+    let registry_addr = env.register(MockRegistry, ());
+    let native_asset = env.register(MockAsset, ());
+
+    let registry_client = MockRegistryClient::new(&env, &registry_addr);
+    let material_id = env.sha512_256(b"material_native_1");
+
+    registry_client.set_material(&material_id, &MaterialRecord {
+        material_id: material_id.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![&env, AssetQuote {
+            asset: native_asset.clone(),
+            amount: 10_000_000, // 10 XLM
+        }],
+        payout_shares: vec![&env],
+    });
+
+    let contract_id = env.register(PurchaseManager, ());
+    let client = PurchaseManagerClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &registry_addr, &treasury, &500);
+    client.register_native_asset(&admin, &native_asset, &true);
+
+    let sample_tx_id = env.sha512_256(b"test_transaction_native_1");
+
+    let purchase_id = client.purchase(&buyer, &material_id, &native_asset, &10_000_000, &sample_tx_id);
+    assert!(purchase_id > 0);
+
+    assert!(client.has_entitlement(&material_id, &buyer));
+}
+
+#[test]
+fn test_native_asset_purchase_with_payouts() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let buyer = Address::random(&env);
+    let creator = Address::random(&env);
+    let admin = Address::random(&env);
+    let treasury = Address::random(&env);
+    let payout_recipient = Address::random(&env);
+    let registry_addr = env.register(MockRegistry, ());
+    let native_asset = env.register(MockAsset, ());
+
+    let registry_client = MockRegistryClient::new(&env, &registry_addr);
+    let material_id = env.sha512_256(b"material_native_2");
+
+    registry_client.set_material(&material_id, &MaterialRecord {
+        material_id: material_id.clone(),
+        creator: creator.clone(),
+        paused: false,
+        status: MaterialStatus::Active,
+        quotes: vec![&env, AssetQuote {
+            asset: native_asset.clone(),
+            amount: 20_000_000, // 20 XLM
+        }],
+        payout_shares: vec![
+            &env,
+            PayoutShare { recipient: creator.clone(), share_bps: 6_500 },
+            PayoutShare { recipient: payout_recipient.clone(), share_bps: 3_500 },
+        ],
+    });
+
+    let contract_id = env.register(PurchaseManager, ());
+    let client = PurchaseManagerClient::new(&env, &contract_id);
+
+    client.initialize(&admin, &registry_addr, &treasury, &500);
+    client.register_native_asset(&admin, &native_asset, &true);
+
+    let sample_tx_id = env.sha512_256(b"test_transaction_native_2");
+
+    let purchase_id = client.purchase(&buyer, &material_id, &native_asset, &20_000_000, &sample_tx_id);
+    assert!(purchase_id > 0);
+
+    assert!(client.has_entitlement(&material_id, &buyer));
+
+    let escrow = client.get_escrow_record(&purchase_id);
+    assert!(escrow.claimed == false);
+    assert_eq!(escrow.total_amount, 20_000_000);
+    assert_eq!(escrow.payout_shares.len(), 2);
+}
