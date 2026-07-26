@@ -42,6 +42,7 @@ export async function POST(request) {
     }
 
     const newUser = {
+      uuid: crypto.randomUUID(),
       ...profile,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
