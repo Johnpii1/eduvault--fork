@@ -127,6 +127,33 @@ export async function fetchFeeStats() {
 }
 
 /**
+ * Resolve a transaction hash to its on-chain confirmation status by querying
+ * Horizon with failover support. Used by the asynchronous payment
+ * reconciliation job (issue #418) to grant access once a pending payment lands.
+ *
+ * @param {string} hash - Stellar transaction hash.
+ * @returns {Promise<'confirmed'|'failed'|'pending'|'not_found'>}
+ *   - 'confirmed'  transaction is in the ledger and succeeded
+ *   - 'failed'     transaction is in the ledger but did not succeed
+ *   - 'pending'    not yet visible on Horizon (still awaiting inclusion)
+ *   - 'not_found'  no hash supplied
+ */
+export async function getTransactionStatus(hash) {
+  if (!hash) return 'not_found';
+
+  try {
+    const tx = await withFailover((server) => server.transactions().transaction(hash).call());
+    return tx?.successful ? 'confirmed' : 'failed';
+  } catch (err) {
+    const status = err?.response?.status ?? err?.status;
+    // Horizon returns 404 until the transaction is included in a ledger.
+    // Treat that as "still pending" so the next polling run re-checks it.
+    if (status === 404) return 'pending';
+    throw err;
+  }
+}
+
+/**
  * Return the list of all configured Horizon endpoints (primary + fallbacks)
  * for diagnostics / health checks.
  */
