@@ -289,6 +289,34 @@ export function validateChangeReason(reason) {
   return sanitizeString(reason, { maxLength: 500 });
 }
 
+export function validateDateRangeQuery(searchParams, { maxRangeDays = 366, defaultRangeDays = 30 } = {}) {
+  const fromParam = searchParams.get("from");
+  const toParam = searchParams.get("to");
+
+  const to = toParam ? new Date(toParam) : new Date();
+  if (Number.isNaN(to.getTime())) {
+    throw new ValidationError("Invalid 'to' date", { field: "to" });
+  }
+
+  const from = fromParam
+    ? new Date(fromParam)
+    : new Date(to.getTime() - defaultRangeDays * 24 * 60 * 60 * 1000);
+  if (Number.isNaN(from.getTime())) {
+    throw new ValidationError("Invalid 'from' date", { field: "from" });
+  }
+
+  if (from > to) {
+    throw new ValidationError("'from' date must not be after 'to' date", { field: "from" });
+  }
+
+  const rangeDays = (to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000);
+  if (rangeDays > maxRangeDays) {
+    throw new ValidationError(`Date range cannot exceed ${maxRangeDays} days`, { field: "from" });
+  }
+
+  return { from, to };
+}
+
 export function parsePagination(searchParams, { defaultPageSize = 12, maxPageSize = 50 } = {}) {
   const page = Math.max(1, Number(searchParams.get("page") || "1"));
   const pageSize = Math.max(
