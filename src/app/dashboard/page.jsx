@@ -1,3 +1,4 @@
+import Link from "next/link";
 import WelcomeBanner from "./components/WelcomeBanner";
 import EarningsSection from "./components/EarningsSection";
 import TrendingMaterials from "./components/TrendingMaterials";
@@ -52,6 +53,21 @@ export default async function DashboardPage() {
 
             {/* Second Row: Integrated Metrics Spread */}
             <EarningsSection />
+
+            <div className="grid gap-4 md:grid-cols-3">
+                <Link href="/dashboard/upload" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+                    <p className="text-sm font-semibold text-slate-900">Upload material</p>
+                    <p className="mt-2 text-sm text-slate-600">Publish a new lesson, guide, or worksheet with a title, description, price, and category.</p>
+                </Link>
+                <Link href="/dashboard/my-materials" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+                    <p className="text-sm font-semibold text-slate-900">Manage listings</p>
+                    <p className="mt-2 text-sm text-slate-600">Review your uploaded materials, update pricing, and keep your catalog fresh.</p>
+                </Link>
+                <Link href="/dashboard/profile" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+                    <p className="text-sm font-semibold text-slate-900">Profile setup</p>
+                    <p className="mt-2 text-sm text-slate-600">Refine your creator story with your institution, bio, and public links.</p>
+                </Link>
+            </div>
 
             {/* Main Content Split: Creator Focus vs Discovery */}
             <div className="grid lg:grid-cols-3 gap-8 items-start">
