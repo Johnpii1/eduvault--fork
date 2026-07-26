@@ -68,6 +68,7 @@ export default function MarketPage() {
   const router = useRouter();
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [activeSubject, setActiveSubject] = useState("All");
   const [activeCategory, setActiveCategory] = useState("All");
   const [activeLevel, setActiveLevel] = useState("");
@@ -93,7 +94,9 @@ export default function MarketPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
 
-    setSearchQuery(params.get("search") || "");
+    const initialSearch = params.get("search") || "";
+    setSearchQuery(initialSearch);
+    setDebouncedSearchQuery(initialSearch);
     setActiveSubject(params.get("subject") || "All");
     setActiveCategory(params.get("category") || "All");
     setActiveLevel(params.get("level") || "");
@@ -160,9 +163,17 @@ export default function MarketPage() {
     sortBy, minPrice, maxPrice, creator, usageRights, currentPage, router,
   ]);
 
+  // Debounce the search query so we don't hit the API on every keystroke
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [searchQuery]);
+
   const { data, isLoading, isError, error } =
     useMarketplaceMaterials({
-      search: searchQuery,
+      search: debouncedSearchQuery,
       subject: activeSubject !== "All" ? activeSubject : undefined,
       category: activeCategory !== "All" ? activeCategory : undefined,
       level: activeLevel || undefined,
@@ -208,6 +219,7 @@ export default function MarketPage() {
 
   const resetFilters = () => {
     setSearchQuery("");
+    setDebouncedSearchQuery("");
     setActiveSubject("All");
     setActiveCategory("All");
     setActiveLevel("");
@@ -221,11 +233,13 @@ export default function MarketPage() {
 
   const handleBrowseAll = () => {
     setSearchQuery("");
+    setDebouncedSearchQuery("");
     setCurrentPage(1);
   };
 
   const handleSearchSubject = (subject) => {
     setSearchQuery(subject.toLowerCase());
+    setDebouncedSearchQuery(subject.toLowerCase());
     setActiveSubject(subject);
     setCurrentPage(1);
   };
