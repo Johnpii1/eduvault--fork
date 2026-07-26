@@ -3,6 +3,7 @@ export default function MaterialCardSkeleton() {
     <div
       aria-hidden="true"
       className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden shadow-sm animate-pulse flex flex-col"
+      data-testid="material-card-skeleton"
     >
       <div className="w-full h-36 bg-gray-200 dark:bg-gray-800" />
 
