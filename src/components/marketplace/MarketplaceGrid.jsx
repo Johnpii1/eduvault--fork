@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import MaterialCard from "./MaterialCard";
+import MaterialCardSkeleton from "./MaterialCardSkeleton";
 import PaginationBar from "./PaginationBar";
 
 export default function MarketplaceGrid({
@@ -16,7 +17,7 @@ export default function MarketplaceGrid({
     return (
       <div aria-live="polite" aria-busy="true" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
         {Array.from({ length: 12 }).map((_, i) => (
-          <div key={i} className="bg-white rounded-xl border border-gray-200 p-5 animate-pulse h-56" />
+          <MaterialCardSkeleton key={i} />
         ))}
       </div>
     );
@@ -24,18 +25,18 @@ export default function MarketplaceGrid({
 
   if (isError) {
     return (
-      <div aria-live="polite" className="bg-white rounded-2xl border border-gray-200 py-20 px-6 text-center shadow-sm">
-        <h3 className="text-lg font-bold text-red-600 mb-2">Error loading materials</h3>
-        <p className="text-gray-500 mb-4">{error?.message || "Something went wrong."}</p>
+      <div aria-live="polite" className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 py-20 px-6 text-center shadow-sm">
+        <h3 className="text-lg font-bold text-red-600 dark:text-red-400 mb-2">Error loading materials</h3>
+        <p className="text-gray-500 dark:text-gray-400 mb-4">{error?.message || "Something went wrong."}</p>
       </div>
     );
   }
 
   if (materials.length === 0) {
     return (
-      <div aria-live="polite" className="bg-white rounded-2xl border border-gray-200 py-12 px-6 text-center shadow-sm">
-        <h3 className="text-lg font-bold text-gray-900 mb-3">No materials found</h3>
-        <p className="text-gray-600 mb-6 max-w-md mx-auto">
+      <div aria-live="polite" className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 py-12 px-6 text-center shadow-sm">
+        <h3 className="text-lg font-bold text-gray-900 dark:text-gray-50 mb-3">No materials found</h3>
+        <p className="text-gray-600 dark:text-gray-400 mb-6 max-w-md mx-auto">
           {searchQuery
             ? `No results for "${searchQuery}". Try different keywords or browse by subject.`
             : "Try adjusting your filters to find what you're looking for."}
@@ -49,20 +50,20 @@ export default function MarketplaceGrid({
           </button>
           <button
             onClick={onBrowseAll}
-            className="inline-flex items-center justify-center px-5 py-2.5 border border-gray-200 text-gray-700 font-medium text-sm rounded-lg hover:bg-gray-50 transition"
+            className="inline-flex items-center justify-center px-5 py-2.5 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 font-medium text-sm rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition"
           >
             Browse all materials
           </button>
         </div>
         {searchQuery && (
-          <div className="mt-8 border-t border-gray-200 pt-6">
-            <p className="text-sm text-gray-500 mb-4">Try searching for:</p>
+          <div className="mt-8 border-t border-gray-200 dark:border-gray-800 pt-6">
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Try searching for:</p>
             <div className="flex flex-wrap gap-2 justify-center">
               {["Math", "Science", "Technology", "Business"].map((subject) => (
                 <button
                   key={subject}
                   onClick={() => onSearchSubject(subject)}
-                  className="px-3 py-1.5 bg-blue-50 text-blue-600 text-xs font-medium rounded-full hover:bg-blue-100 transition"
+                  className="px-3 py-1.5 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 text-xs font-medium rounded-full hover:bg-blue-100 dark:hover:bg-blue-900/40 transition"
                 >
                   {subject}
                 </button>
@@ -77,10 +78,10 @@ export default function MarketplaceGrid({
   return (
     <>
       <div className="flex justify-between items-end mb-4 px-1">
-        <h2 className="text-lg font-bold text-gray-800">
+        <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">
           {activeSubject === "All" ? "All Materials" : `${activeSubject} Materials`}
         </h2>
-        <span className="text-sm text-gray-500">{total || 0} results</span>
+        <span className="text-sm text-gray-500 dark:text-gray-400">{total || 0} results</span>
       </div>
 
       <motion.div
