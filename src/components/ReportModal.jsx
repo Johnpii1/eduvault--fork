@@ -84,27 +84,27 @@ export default function ReportModal({ isOpen, onClose, materialId, materialTitle
         role="dialog"
         aria-modal="true"
         aria-labelledby="report-modal-title"
-        className="bg-white rounded-3xl p-6 max-w-md w-full shadow-xl border border-gray-100"
+        className="bg-white dark:bg-surface-strong rounded-3xl p-6 max-w-md w-full shadow-xl border border-gray-100 dark:border-border-subtle"
       >
         {submitted ? (
           /* ── Success state ── */
           <div className="text-center py-6 space-y-4">
-            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 text-green-600">
+            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600">
               <FaCheckCircle className="h-6 w-6" aria-hidden="true" />
             </div>
 
-            <h3 className="text-lg font-bold text-gray-900">Report Submitted</h3>
+            <h3 className="text-lg font-bold text-gray-900 dark:text-foreground">Report Submitted</h3>
 
-            <p className="text-sm text-gray-500 leading-relaxed">
+            <p className="text-sm text-gray-500 dark:text-muted-foreground leading-relaxed">
               Thank you for your report. The listing has been flagged and is currently under admin
               review. We will investigate the issue.
             </p>
 
-            <div className="mt-4 bg-slate-50 rounded-xl p-3 border border-slate-100 text-left">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
+            <div className="mt-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-700 text-left">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 dark:text-slate-500 block">
                 Moderation Queue
               </span>
-              <p className="text-xs text-slate-600 mt-1">
+              <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
                 Status:{" "}
                 <span className="font-semibold text-amber-600">Pending Review</span>
               </p>
@@ -113,7 +113,7 @@ export default function ReportModal({ isOpen, onClose, materialId, materialTitle
             <button
               type="button"
               onClick={resetAndClose}
-              className="mt-6 w-full py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl transition focus-visible:ring-2 focus-visible:ring-blue-500"
+              className="mt-6 w-full py-2 bg-gray-100 dark:bg-surface-muted hover:bg-gray-200 dark:hover:bg-surface-strong text-gray-700 dark:text-foreground/80 font-semibold rounded-xl transition focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               Close
             </button>
@@ -122,12 +122,12 @@ export default function ReportModal({ isOpen, onClose, materialId, materialTitle
           /* ── Form state ── */
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+            <div className="flex items-center justify-between border-b border-gray-100 dark:border-border-subtle pb-3">
               <div className="flex items-center gap-2">
                 <FaFlag className="text-red-500 text-sm" aria-hidden="true" />
                 <h3
                   id="report-modal-title"
-                  className="text-lg font-bold text-gray-950"
+                  className="text-lg font-bold text-gray-950 dark:text-foreground"
                 >
                   Report Resource
                 </h3>
@@ -136,19 +136,19 @@ export default function ReportModal({ isOpen, onClose, materialId, materialTitle
                 type="button"
                 onClick={resetAndClose}
                 aria-label="Close report modal"
-                className="text-gray-400 hover:text-gray-600 rounded-full p-1 transition focus-visible:ring-2 focus-visible:ring-blue-500"
+                className="text-gray-400 dark:text-muted-foreground hover:text-gray-600 rounded-full p-1 transition focus-visible:ring-2 focus-visible:ring-blue-500"
               >
                 <FaTimes aria-hidden="true" />
               </button>
             </div>
 
             {materialTitle ? (
-              <p className="text-xs text-gray-500 bg-gray-50 rounded-xl px-3 py-2 border border-gray-100 truncate">
+              <p className="text-xs text-gray-500 dark:text-muted-foreground bg-gray-50 dark:bg-surface-muted rounded-xl px-3 py-2 border border-gray-100 dark:border-border-subtle truncate">
                 {materialTitle}
               </p>
             ) : null}
 
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-gray-500 dark:text-muted-foreground">
               Help us keep EduVault clean and reliable. Please tell us why you are flagging this
               listing:
             </p>
@@ -157,7 +157,7 @@ export default function ReportModal({ isOpen, onClose, materialId, materialTitle
             <div className="space-y-1.5">
               <label
                 htmlFor="report-reason"
-                className="block text-xs font-bold text-gray-700 uppercase tracking-wider"
+                className="block text-xs font-bold text-gray-700 dark:text-foreground/80 uppercase tracking-wider"
               >
                 Reason for flagging <span aria-hidden="true" className="text-red-500">*</span>
               </label>
@@ -168,7 +168,7 @@ export default function ReportModal({ isOpen, onClose, materialId, materialTitle
                 required
                 aria-required="true"
                 aria-describedby={error ? "report-error" : undefined}
-                className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 text-gray-800 bg-white"
+                className="w-full border border-gray-300 dark:border-border-strong rounded-xl px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 text-gray-800 dark:text-foreground bg-white dark:bg-surface-strong"
               >
                 <option value="">Select a reason...</option>
                 {REPORT_REASONS.map((r) => (
@@ -183,10 +183,10 @@ export default function ReportModal({ isOpen, onClose, materialId, materialTitle
             <div className="space-y-1.5">
               <label
                 htmlFor="report-description"
-                className="block text-xs font-bold text-gray-700 uppercase tracking-wider"
+                className="block text-xs font-bold text-gray-700 dark:text-foreground/80 uppercase tracking-wider"
               >
                 Additional information{" "}
-                <span className="text-gray-400 font-normal normal-case">(optional)</span>
+                <span className="text-gray-400 dark:text-muted-foreground font-normal normal-case">(optional)</span>
               </label>
               <textarea
                 id="report-description"
@@ -194,7 +194,7 @@ export default function ReportModal({ isOpen, onClose, materialId, materialTitle
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Please provide any details that may help our review team..."
                 rows={4}
-                className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 text-gray-800 resize-none"
+                className="w-full border border-gray-300 dark:border-border-strong rounded-xl px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 text-gray-800 dark:text-foreground bg-white dark:bg-surface-strong resize-none"
               />
             </div>
 
@@ -214,7 +214,7 @@ export default function ReportModal({ isOpen, onClose, materialId, materialTitle
               <button
                 type="button"
                 onClick={resetAndClose}
-                className="flex-1 py-2 border border-gray-200 text-gray-600 hover:bg-gray-50 font-semibold rounded-xl transition focus-visible:ring-2 focus-visible:ring-blue-500"
+                className="flex-1 py-2 border border-gray-200 dark:border-border-strong text-gray-600 dark:text-muted-foreground hover:bg-gray-50 dark:hover:bg-surface-muted font-semibold rounded-xl transition focus-visible:ring-2 focus-visible:ring-blue-500"
               >
                 Cancel
               </button>
