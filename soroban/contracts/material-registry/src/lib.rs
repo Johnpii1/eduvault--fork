@@ -525,11 +525,7 @@ impl MaterialRegistry {
         let mut i = cursor;
         while i < end {
             let index_key = DataKey::MaterialIndex(i);
-            if let Some(material_id) = env
-                .storage()
-                .persistent()
-                .get::<_, BytesN<32>>(&index_key)
-            {
+            if let Some(material_id) = env.storage().persistent().get::<_, BytesN<32>>(&index_key) {
                 extend_persistent_ttl(&env, &index_key);
                 let core_key = DataKey::MaterialCore(material_id.clone());
                 let sale_key = DataKey::MaterialSale(material_id.clone());
