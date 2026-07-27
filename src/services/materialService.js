@@ -61,7 +61,7 @@ export const materialService = {
   },
 
   getTrendingMaterials: async (params = {}) => {
-    const searchParams = new URLSearchParams({ ...params, sort: 'trending' });
+    const searchParams = buildQueryParams({ ...params, sort: 'trending' });
     return apiClient(`/api/market-materials?${searchParams.toString()}`);
   },
 };
