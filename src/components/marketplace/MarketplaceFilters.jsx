@@ -25,8 +25,11 @@ export default function MarketplaceFilters({
   const debounceRef = useRef(null);
 
   // Keep the local input in sync when the query changes externally
-  // (URL restore, "clear filters", subject quick-search).
+  // (URL restore, "clear filters", subject quick-search). Cancel any pending
+  // local-search debounce so the stale callback can't overwrite the new query.
   useEffect(() => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = null;
     setSearchInput(searchQuery);
   }, [searchQuery]);
 
