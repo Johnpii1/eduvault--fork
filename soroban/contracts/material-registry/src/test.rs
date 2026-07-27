@@ -930,9 +930,10 @@ fn sale_term_update_write_cost_drops_at_least_20_percent_vs_legacy_layout() {
         updated_ledger: env.ledger().sequence(),
     };
     env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .set(&LegacyDataKey::Material(material_id.clone()), &legacy_record);
+        env.storage().persistent().set(
+            &LegacyDataKey::Material(material_id.clone()),
+            &legacy_record,
+        );
     });
     let legacy_write_bytes = env.cost_estimate().resources().write_bytes;
 
@@ -975,7 +976,7 @@ fn set_short_ttl_window(env: &Env) {
 /// a small tolerance rather than asserting an exact figure.
 fn assert_ttl_renewed_to_max(ttl: u32) {
     assert!(
-        ttl <= 20_000 && ttl >= 19_990,
+        (19_990..=20_000).contains(&ttl),
         "expected TTL near the 20_000 max, got {ttl}"
     );
 }
@@ -1033,15 +1034,20 @@ fn material_ttl_renews_on_read_after_partial_lapse() {
     let core_key = DataKey::MaterialCore(material_id.clone());
     let sale_key = DataKey::MaterialSale(material_id.clone());
 
-    let initial_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&core_key));
+    let initial_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&core_key)
+    });
     assert_ttl_renewed_to_max(initial_ttl);
 
     // Advance past the renewal threshold without reading the material.
     env.ledger().with_mut(|li| li.sequence_number += 12_000);
-    let lapsed_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&core_key));
-    assert!(lapsed_ttl <= 8_000 && lapsed_ttl >= 7_990, "expected TTL to have decayed to ~8_000, got {lapsed_ttl}");
+    let lapsed_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&core_key)
+    });
+    assert!(
+        (7_990..=8_000).contains(&lapsed_ttl),
+        "expected TTL to have decayed to ~8_000, got {lapsed_ttl}"
+    );
 
     // A plain read — the same lookup a buyer's purchase attempt performs —
     // renews both halves of the record back to the max, with no special
@@ -1049,10 +1055,12 @@ fn material_ttl_renews_on_read_after_partial_lapse() {
     let record = client.get_material(&material_id);
     assert_eq!(record.material_id, material_id);
 
-    let renewed_core_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&core_key));
-    let renewed_sale_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&sale_key));
+    let renewed_core_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&core_key)
+    });
+    let renewed_sale_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&sale_key)
+    });
     assert_ttl_renewed_to_max(renewed_core_ttl);
     assert_ttl_renewed_to_max(renewed_sale_ttl);
 }
@@ -1078,8 +1086,9 @@ fn allowed_asset_ttl_renews_on_write() {
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
 
     let asset_key = DataKey::AllowedAsset(asset.clone());
-    let initial_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_key));
+    let initial_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&asset_key)
+    });
     assert_ttl_renewed_to_max(initial_ttl);
 
     env.ledger().with_mut(|li| li.sequence_number += 12_000);
@@ -1137,7 +1146,10 @@ fn extend_materials_ttl_is_cursor_based_and_bounded() {
     // enforcement, proves the sweep cannot exceed transaction resource
     // limits regardless of what's requested.
     let next_cursor = client.extend_materials_ttl(&0, &10_000);
-    assert_eq!(next_cursor, 25, "batch should be clamped to MAX_MAINTENANCE_BATCH");
+    assert_eq!(
+        next_cursor, 25,
+        "batch should be clamped to MAX_MAINTENANCE_BATCH"
+    );
 
     // Resuming from the returned cursor covers the remainder.
     let final_cursor = client.extend_materials_ttl(&next_cursor, &10_000);
@@ -1152,8 +1164,9 @@ fn extend_materials_ttl_is_cursor_based_and_bounded() {
             .unwrap()
     });
     let core_key = DataKey::MaterialCore(bootstrap_material_id);
-    let renewed_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&core_key));
+    let renewed_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&core_key)
+    });
     assert_ttl_renewed_to_max(renewed_ttl);
 }
 
@@ -1187,7 +1200,113 @@ fn extend_asset_policy_ttl_is_cursor_based() {
     assert_eq!(final_cursor, 2);
 
     let asset_a_key = DataKey::AllowedAsset(asset_a);
-    let renewed_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_a_key));
+    let renewed_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&asset_a_key)
+    });
     assert_ttl_renewed_to_max(renewed_ttl);
+}
+
+// ============== Pause / Active / Deactivate lifecycle (Issue #411) ==============
+
+#[test]
+fn pause_active_and_toggle_helpers_track_material_status() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let material_id = client.register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 4),
+        &bytes32(&env, 5),
+        &default_quotes(&env),
+        &default_payout_shares(&env),
+    );
+
+    // Freshly registered material is active and unpaused.
+    assert!(!client.is_material_paused(&material_id));
+
+    // Pause via the boolean helper.
+    client.set_material_paused(&creator, &material_id, &true);
+    assert!(client.is_material_paused(&material_id));
+    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Paused);
+
+    // Reactivate via set_material_active.
+    client.set_material_active(&creator, &material_id, &true);
+    assert!(!client.is_material_paused(&material_id));
+    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Active);
+
+    // Toggle flips the current pause state.
+    client.toggle_material_paused(&creator, &material_id);
+    assert!(client.is_material_paused(&material_id));
+    client.toggle_material_paused(&creator, &material_id);
+    assert!(!client.is_material_paused(&material_id));
+}
+
+#[test]
+fn deactivating_material_archives_then_restores_status() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let material_id = client.register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 4),
+        &bytes32(&env, 5),
+        &default_quotes(&env),
+        &default_payout_shares(&env),
+    );
+
+    // Deactivating archives the material.
+    client.set_material_deactivated(&creator, &material_id, &true);
+    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Archived);
+
+    // Reactivating an unpaused material returns it to Active.
+    client.set_material_deactivated(&creator, &material_id, &false);
+    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Active);
+}
+
+#[test]
+fn get_material_and_get_quote_reject_unknown_material() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+
+    let unknown_id = bytes32(&env, 200);
+    let asset = Address::generate(&env);
+
+    assert_eq!(
+        client.try_get_material(&unknown_id),
+        Err(Ok(RegistryError::MaterialNotFound))
+    );
+    assert_eq!(
+        client.try_get_quote(&unknown_id, &asset),
+        Err(Ok(RegistryError::MaterialNotFound))
+    );
+}
+
+#[test]
+fn non_creator_cannot_change_material_status() {
+    let env = Env::default();
+    let (_contract_id, client) = install_contract(&env);
+    env.mock_all_auths();
+
+    let creator = Address::generate(&env);
+    let material_id = client.register_material(
+        &creator,
+        &metadata_uri(&env),
+        &bytes32(&env, 4),
+        &bytes32(&env, 5),
+        &default_quotes(&env),
+        &default_payout_shares(&env),
+    );
+
+    // A stranger who is neither the creator nor the upgrade-admin is rejected,
+    // and the material's status is left untouched.
+    let stranger = Address::generate(&env);
+    let result = client.try_set_material_status(&stranger, &material_id, &MaterialStatus::Paused);
+    assert_eq!(result, Err(Ok(RegistryError::NotAuthorized)));
+    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Active);
 }

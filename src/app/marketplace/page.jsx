@@ -68,6 +68,7 @@ export default function MarketPage() {
   const router = useRouter();
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [activeSubject, setActiveSubject] = useState("All");
   const [activeCategory, setActiveCategory] = useState("All");
   const [activeLevel, setActiveLevel] = useState("");
@@ -93,7 +94,9 @@ export default function MarketPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
 
-    setSearchQuery(params.get("search") || "");
+    const initialSearch = params.get("search") || "";
+    setSearchQuery(initialSearch);
+    setDebouncedSearchQuery(initialSearch);
     setActiveSubject(params.get("subject") || "All");
     setActiveCategory(params.get("category") || "All");
     setActiveLevel(params.get("level") || "");
@@ -160,9 +163,17 @@ export default function MarketPage() {
     sortBy, minPrice, maxPrice, creator, usageRights, currentPage, router,
   ]);
 
+  // Debounce the search query so we don't hit the API on every keystroke
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(timeout);
+  }, [searchQuery]);
+
   const { data, isLoading, isError, error } =
     useMarketplaceMaterials({
-      search: searchQuery,
+      search: debouncedSearchQuery,
       subject: activeSubject !== "All" ? activeSubject : undefined,
       category: activeCategory !== "All" ? activeCategory : undefined,
       level: activeLevel || undefined,
@@ -208,6 +219,7 @@ export default function MarketPage() {
 
   const resetFilters = () => {
     setSearchQuery("");
+    setDebouncedSearchQuery("");
     setActiveSubject("All");
     setActiveCategory("All");
     setActiveLevel("");
@@ -221,11 +233,13 @@ export default function MarketPage() {
 
   const handleBrowseAll = () => {
     setSearchQuery("");
+    setDebouncedSearchQuery("");
     setCurrentPage(1);
   };
 
   const handleSearchSubject = (subject) => {
     setSearchQuery(subject.toLowerCase());
+    setDebouncedSearchQuery(subject.toLowerCase());
     setActiveSubject(subject);
     setCurrentPage(1);
   };
@@ -234,7 +248,7 @@ export default function MarketPage() {
     <>
       <Navbar />
 
-      <section className="flex flex-col lg:flex-row min-h-screen bg-[#fffaf6]">
+      <section className="flex flex-col lg:flex-row min-h-screen bg-background">
         <MarketplaceFilters
           subjects={subjects}
           categories={categories}
@@ -258,17 +272,17 @@ export default function MarketPage() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4 }}
-            className="bg-linear-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-6 mb-8"
+            className="bg-linear-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 border border-blue-100 dark:border-blue-900/50 rounded-2xl p-6 mb-8"
           >
-            <h1 className="text-xl md:text-2xl font-bold text-gray-900 mb-2">
+            <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">
               Academic Marketplace
             </h1>
 
-            <p className="text-gray-600 text-sm mb-4">
+            <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">
               Search by title, description, and author.
             </p>
 
-            <button className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all shadow-sm focus-visible:ring-2 focus-visible:ring-blue-500">
+            <button className="bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all shadow-sm focus-visible:ring-2 focus-visible:ring-blue-500">
               Share Your Notes
             </button>
           </motion.div>
