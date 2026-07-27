@@ -8,6 +8,7 @@ import { getUserFromCookie } from "@/lib/api/auth";
 import { getDb } from "@/lib/mongodb";
 import { ObjectId } from "mongodb";
 import { buildMaterialHistoryEntry, EDITABLE_MATERIAL_FIELDS } from "@/lib/backend/schemaContracts";
+import { getMaterialSalesTotals } from "@/lib/backend/materialSales";
 
 export const runtime = "nodejs";
 
@@ -83,7 +84,15 @@ export async function GET(request) {
           .sort({ createdAt: -1 })
           .toArray();
 
-        const normalized = items.map(sanitizeMaterial);
+        const salesTotals = await getMaterialSalesTotals(
+          db,
+          items.map((item) => String(item._id))
+        );
+
+        const normalized = items.map((doc) => {
+          const totals = salesTotals.get(String(doc._id)) || { sales: 0, revenue: 0 };
+          return { ...sanitizeMaterial(doc), sales: totals.sales, revenue: totals.revenue };
+        });
         return NextResponse.json(normalized);
       } catch (err) {
         if (err.name === "ValidationError") throw err;

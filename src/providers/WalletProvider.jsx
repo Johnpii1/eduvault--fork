@@ -140,12 +140,23 @@ export function WalletProvider({ children }) {
       try {
         ensureKitInitialized();
 
+        // E2E test seam: headless Playwright runs have no real wallet
+        // extension for StellarWalletsKit.getAddress() to find, so tests
+        // inject `window.__EDUVAULT_E2E__.walletAddress` before navigation
+        // to simulate an already-connected wallet. Never set by real users.
+        const e2eAddress =
+          typeof window !== 'undefined' ? window.__EDUVAULT_E2E__?.walletAddress : undefined;
+
         let address;
-        try {
-          const result = await StellarWalletsKit.getAddress();
-          address = result.address;
-        } catch {
-          address = undefined;
+        if (e2eAddress) {
+          address = e2eAddress;
+        } else {
+          try {
+            const result = await StellarWalletsKit.getAddress();
+            address = result.address;
+          } catch {
+            address = undefined;
+          }
         }
 
         if (cancelled) return;

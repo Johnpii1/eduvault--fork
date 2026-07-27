@@ -11,6 +11,17 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  // Playwright specs and config run under Node, not the browser — declare
+  // the Node globals eslint-config-next's browser-oriented ruleset doesn't.
+  {
+    files: ["e2e/**/*.js", "playwright.config.mjs"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+        Buffer: "readonly",
+      },
+    },
+  },
 ]);
 
 export default eslintConfig;

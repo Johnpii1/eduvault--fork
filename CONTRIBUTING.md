@@ -28,6 +28,15 @@ docker compose up -d mongodb
 npm run dev
 ```
 
+### End-to-end tests
+
+Playwright drives the app in a real browser. Install the browser binaries once, then run the suite (it starts its own dev server, so `npm run dev` doesn't need to be running):
+
+```bash
+npx playwright install --with-deps chromium
+npm run test:e2e
+```
+
 ## Branching
 
 - Use a short descriptive branch name such as `docs/stellar-submission` or `feat/entitlement-checks`.
