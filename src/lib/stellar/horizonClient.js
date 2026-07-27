@@ -135,6 +135,29 @@ export function getConfiguredEndpoints() {
 }
 
 /**
+ * Fetch a ledger's canonical hash by sequence number, for reorg detection
+ * (#469). Soroban RPC's `getEvents` does not return ledger hashes, only
+ * sequence numbers, so the indexer supplements it with this Horizon lookup
+ * whenever it needs to confirm a previously-checkpointed ledger hasn't been
+ * replaced by a chain reorganization.
+ *
+ * @param {number} sequence
+ * @returns {Promise<{ sequence: number, hash: string } | null>} null if the
+ *   ledger is not found (e.g. already outside Horizon's retention window).
+ */
+export async function getLedgerBySequence(sequence) {
+  try {
+    return await withFailover(async (server) => {
+      const ledger = await server.ledgers().ledger(sequence).call();
+      return { sequence: ledger.sequence, hash: ledger.hash };
+    });
+  } catch (error) {
+    if (error?.response?.status === 404) return null;
+    throw error;
+  }
+}
+
+/**
  * Fetch current network fee statistics from Horizon endpoint /fee_stats.
  * @returns {Promise<Object>} Fee statistics object
  */

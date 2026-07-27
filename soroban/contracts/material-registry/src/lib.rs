@@ -1,5 +1,9 @@
 #![no_std]
 
+use shared_interface::{
+    AssetKind, AssetPolicyInfo, AssetQuote, MaterialStatus, PayoutShare, PendingAdminTransfer,
+    MIN_ADMIN_TRANSFER_DELAY_SECS,
+};
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, BytesN, Env,
@@ -27,50 +31,22 @@ const TTL_RENEWAL_DIVISOR: u32 = 2;
 /// if this constant is ever raised past what the network actually allows.
 const MAX_MAINTENANCE_BATCH: u32 = 25;
 
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MaterialStatus {
-    Active = 0,
-    Paused = 1,
-    Archived = 2,
-}
+// MaterialStatus, AssetKind, AssetQuote, and PayoutShare are defined once in
+// `shared-interface` (#465) and imported above, so a field-order or enum
+// change can't silently desync this contract's XDR encoding from
+// `purchase-manager`'s.
 
-/// Classification of a Stellar asset supported by the registry.
-///
-/// - `Native`           – XLM (the Stellar native asset, wrapped via its SAC).
-/// - `Token`            – Any SAC-wrapped token such as USDC or EURC.
-/// - `CreatorToken`     – A creator-specific SAC token (e.g., a course-access token
-///                        minted by the content creator themselves).
-/// - `InstitutionAsset`  – Institution-issued access assets for granting bulk or targeted access.
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AssetKind {
-    Native = 0,
-    Token = 1,
-    CreatorToken = 2,
-    InstitutionAsset = 3,
-}
-
-/// Metadata stored in the registry allowlist for each approved asset.
+/// Initial allowlist entry supplied to `initialize` (#462), letting the
+/// deploying admin pre-approve assets in the same transaction that
+/// establishes upgrade-admin authority — closing the chicken-and-egg gap
+/// that previously forced the first `register_material` call to bypass the
+/// allowlist entirely.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AllowedAssetInfo {
+pub struct InitialAssetPolicy {
+    pub asset: Address,
     pub kind: AssetKind,
     pub enabled: bool,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AssetQuote {
-    pub asset: Address,
-    pub amount: i128,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PayoutShare {
-    pub recipient: Address,
-    pub share_bps: u32,
 }
 
 #[contracttype]
@@ -122,6 +98,8 @@ enum DataKey {
     /// Instance storage (#464 Tier A) — shares the contract instance's own
     /// TTL, so it never needs independent renewal.
     UpgradeAdmin,
+    /// A pending, not-yet-accepted admin-authority transfer (#463).
+    PendingAdminTransfer,
     CreatorNonce(Address),
     MaterialCore(BytesN<32>),
     MaterialSale(BytesN<32>),
@@ -159,6 +137,19 @@ pub enum RegistryError {
     NotAuthorized = 14,
     /// A quote asset is not in the registry's approved-asset allowlist.
     UnapprovedAsset = 15,
+    /// `initialize` was called on a contract that already has an admin set.
+    AlreadyInitialized = 16,
+    /// An entrypoint that requires an established admin (e.g.
+    /// `register_material`) was called before `initialize`.
+    NotInitialized = 17,
+    /// `accept_admin_transfer` / `cancel_admin_transfer` called with no
+    /// transfer in progress.
+    NoPendingAdminTransfer = 18,
+    /// `accept_admin_transfer` called before the configured delay elapsed.
+    TransferDelayNotElapsed = 19,
+    /// `initiate_admin_transfer` called with a delay shorter than
+    /// `shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS`.
+    InvalidTransferDelay = 20,
 }
 
 #[contractevent(topics = ["material", "registered"], data_format = "vec")]
@@ -234,14 +225,13 @@ impl MaterialRegistry {
         payout_shares: Vec<PayoutShare>,
     ) -> Result<BytesN<32>, RegistryError> {
         creator.require_auth();
+        if !env.storage().instance().has(&DataKey::UpgradeAdmin) {
+            return Err(RegistryError::NotInitialized);
+        }
         validate_metadata_uri(&metadata_uri)?;
         validate_quotes(&quotes)?;
         validate_payout_shares(&payout_shares)?;
-        // Asset allowlist is enforced once the upgrade-admin has been established
-        // (i.e. after the very first material registration). This allows the
-        // initial deployer to bootstrap assets without a chicken-and-egg problem.
         validate_quote_assets(&env, &quotes)?;
-        initialize_upgrade_admin_if_missing(&env, &creator);
 
         let next_nonce = get_creator_nonce(&env, &creator);
         let material_id = derive_material_id(&env, &creator, next_nonce);
@@ -464,7 +454,7 @@ impl MaterialRegistry {
         let asset_key = DataKey::AllowedAsset(asset.clone());
         let is_new_asset = !env.storage().persistent().has(&asset_key);
 
-        let info = AllowedAssetInfo { kind, enabled };
+        let info = AssetPolicyInfo { kind, enabled };
         env.storage().persistent().set(&asset_key, &info);
         extend_persistent_ttl(&env, &asset_key);
 
@@ -489,8 +479,8 @@ impl MaterialRegistry {
             .unwrap_or(false)
     }
 
-    /// Returns the full `AllowedAssetInfo` record for `asset`, if present.
-    pub fn get_asset_info(env: Env, asset: Address) -> Option<AllowedAssetInfo> {
+    /// Returns the full `AssetPolicyInfo` record for `asset`, if present.
+    pub fn get_asset_info(env: Env, asset: Address) -> Option<AssetPolicyInfo> {
         get_allowed_asset_info(&env, &asset)
     }
 
@@ -576,19 +566,61 @@ impl MaterialRegistry {
         end
     }
 
-    // ============== Upgrade / Admin ==============
+    // ============== Initialization / Upgrade / Admin ==============
 
-    /// Transfer upgrade admin role to another address.
-    pub fn set_upgrade_admin(
+    /// One-time contract initialization (#462). Must be called before any
+    /// material can be registered. `initial_assets` lets the deploying admin
+    /// pre-approve payment assets atomically in the same transaction, so
+    /// `register_material` never needs to special-case "no admin yet".
+    ///
+    /// This closes a front-runnable bootstrap gap: previously, admin
+    /// authority was assigned implicitly to whoever's `register_material`
+    /// transaction landed first after deploy, and that same first call
+    /// bypassed asset-allowlist validation entirely. Explicit initialization
+    /// means authority is established in one authenticated, one-time call,
+    /// and every material — including the first — is validated the same way.
+    ///
+    /// # Migration for already-deployed registries
+    /// A registry deployed before this change already has `UpgradeAdmin` set
+    /// (via the old implicit bootstrap, from its first registered material),
+    /// so calling `initialize` on it simply returns `AlreadyInitialized` — no
+    /// action is required there. Only fresh deployments must call this
+    /// explicitly, before anyone can call `register_material`.
+    pub fn initialize(
         env: Env,
-        current_admin: Address,
-        next_admin: Address,
+        admin: Address,
+        initial_assets: Vec<InitialAssetPolicy>,
     ) -> Result<(), RegistryError> {
-        current_admin.require_auth();
-        require_upgrade_admin(&env, &current_admin)?;
-        env.storage()
-            .instance()
-            .set(&DataKey::UpgradeAdmin, &next_admin);
+        admin.require_auth();
+
+        if env.storage().instance().has(&DataKey::UpgradeAdmin) {
+            return Err(RegistryError::AlreadyInitialized);
+        }
+
+        env.storage().instance().set(&DataKey::UpgradeAdmin, &admin);
+
+        let mut index = 0;
+        while index < initial_assets.len() {
+            let entry = initial_assets.get_unchecked(index);
+            let asset_key = DataKey::AllowedAsset(entry.asset.clone());
+            let info = AssetPolicyInfo {
+                kind: entry.kind,
+                enabled: entry.enabled,
+            };
+            env.storage().persistent().set(&asset_key, &info);
+            extend_persistent_ttl(&env, &asset_key);
+            index_allowed_asset(&env, &entry.asset);
+
+            AssetPolicyUpdatedEvent {
+                asset: entry.asset,
+                kind: entry.kind,
+                enabled: entry.enabled,
+            }
+            .publish(&env);
+
+            index += 1;
+        }
+
         extend_instance_ttl(&env);
         Ok(())
     }
@@ -597,6 +629,91 @@ impl MaterialRegistry {
         let admin = env.storage().instance().get(&DataKey::UpgradeAdmin);
         extend_instance_ttl(&env);
         admin
+    }
+
+    /// Begin a two-step, time-delayed transfer of upgrade-admin authority
+    /// (#463). The current admin remains fully authoritative until
+    /// `candidate` calls `accept_admin_transfer`, and only after `delay_secs`
+    /// (floored at `shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS`) has
+    /// elapsed. This replaces the old `set_upgrade_admin`, which transferred
+    /// authority instantly and irreversibly in a single call — a typo'd or
+    /// compromised `next_admin` address had no recovery window.
+    pub fn initiate_admin_transfer(
+        env: Env,
+        current_admin: Address,
+        candidate: Address,
+        delay_secs: u64,
+    ) -> Result<(), RegistryError> {
+        current_admin.require_auth();
+        require_upgrade_admin(&env, &current_admin)?;
+
+        if delay_secs < MIN_ADMIN_TRANSFER_DELAY_SECS {
+            return Err(RegistryError::InvalidTransferDelay);
+        }
+
+        let now = env.ledger().timestamp();
+        let pending = PendingAdminTransfer {
+            candidate,
+            initiated_at: now,
+            accept_after: now + delay_secs,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdminTransfer, &pending);
+        extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Complete a pending admin-authority transfer initiated by
+    /// `initiate_admin_transfer`. Only the nominated candidate may call
+    /// this, and only once the configured delay has elapsed.
+    pub fn accept_admin_transfer(env: Env, candidate: Address) -> Result<(), RegistryError> {
+        candidate.require_auth();
+
+        let pending: PendingAdminTransfer = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdminTransfer)
+            .ok_or(RegistryError::NoPendingAdminTransfer)?;
+
+        if pending.candidate != candidate {
+            return Err(RegistryError::NotAuthorized);
+        }
+        if env.ledger().timestamp() < pending.accept_after {
+            return Err(RegistryError::TransferDelayNotElapsed);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::UpgradeAdmin, &candidate);
+        env.storage().instance().remove(&DataKey::PendingAdminTransfer);
+        extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Cancel a pending admin-authority transfer before it's accepted —
+    /// e.g. after nominating the wrong address. Callable by the current
+    /// admin only.
+    pub fn cancel_admin_transfer(env: Env, current_admin: Address) -> Result<(), RegistryError> {
+        current_admin.require_auth();
+        require_upgrade_admin(&env, &current_admin)?;
+
+        if !env.storage().instance().has(&DataKey::PendingAdminTransfer) {
+            return Err(RegistryError::NoPendingAdminTransfer);
+        }
+        env.storage().instance().remove(&DataKey::PendingAdminTransfer);
+        extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Return the pending admin transfer, if one is in progress.
+    pub fn get_pending_admin_transfer(env: Env) -> Option<PendingAdminTransfer> {
+        let pending = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdminTransfer);
+        extend_instance_ttl(&env);
+        pending
     }
 
     /// Apply a Soroban WASM upgrade, controlled by an upgrade admin.
@@ -841,13 +958,6 @@ fn index_allowed_asset(env: &Env, asset: &Address) {
     extend_instance_ttl(env);
 }
 
-fn initialize_upgrade_admin_if_missing(env: &Env, admin: &Address) {
-    if !env.storage().instance().has(&DataKey::UpgradeAdmin) {
-        env.storage().instance().set(&DataKey::UpgradeAdmin, admin);
-    }
-    extend_instance_ttl(env);
-}
-
 fn require_upgrade_admin(env: &Env, candidate: &Address) -> Result<(), RegistryError> {
     let admin: Address = env
         .storage()
@@ -875,7 +985,7 @@ fn require_creator_or_upgrade_admin(
 
 // ============== Asset Allowlist Internals ==============
 
-fn get_allowed_asset_info(env: &Env, asset: &Address) -> Option<AllowedAssetInfo> {
+fn get_allowed_asset_info(env: &Env, asset: &Address) -> Option<AssetPolicyInfo> {
     let key = DataKey::AllowedAsset(asset.clone());
     let info = env.storage().persistent().get(&key);
     if info.is_some() {
@@ -885,17 +995,12 @@ fn get_allowed_asset_info(env: &Env, asset: &Address) -> Option<AllowedAssetInfo
 }
 
 /// Validate that every asset referenced in `quotes` is present in the
-/// allowlist and currently enabled.
-///
-/// Validation is skipped when the upgrade-admin has not yet been set (i.e.
-/// before the very first `register_material` call) to avoid a bootstrap
-/// deadlock where no admin exists to pre-approve assets.
+/// allowlist and currently enabled. Callers must ensure the contract has
+/// been initialized (an upgrade-admin exists) before calling this — this
+/// function no longer bypasses validation for a pre-initialization state,
+/// since `register_material` and `update_sale_terms` are only reachable
+/// after `initialize` has run (#462).
 fn validate_quote_assets(env: &Env, quotes: &Vec<AssetQuote>) -> Result<(), RegistryError> {
-    // No allowlist enforcement until an upgrade-admin is established.
-    if !env.storage().instance().has(&DataKey::UpgradeAdmin) {
-        return Ok(());
-    }
-
     let mut index = 0;
     while index < quotes.len() {
         let quote = quotes.get_unchecked(index);
