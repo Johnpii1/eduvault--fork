@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import UploadWizard from '../UploadWizard';
 
 vi.mock('next/image', () => ({
@@ -54,5 +54,21 @@ describe('UploadWizard', () => {
     expect(screen.getByLabelText(/document title/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/set your price/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/category/i)).toBeInTheDocument();
+  });
+
+  it('previews and removes a selected thumbnail', () => {
+    URL.createObjectURL = vi.fn(() => 'blob:thumbnail-preview');
+    URL.revokeObjectURL = vi.fn();
+    render(<UploadWizard />);
+
+    fireEvent.change(screen.getByLabelText(/thumbnail image/i), {
+      target: { files: [new File(['image'], 'algebra-cover.png', { type: 'image/png' })] },
+    });
+    expect(screen.getByAltText(/thumbnail preview for algebra-cover\.png/i)).toHaveAttribute('src', 'blob:thumbnail-preview');
+    expect(screen.getByText('algebra-cover.png')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /remove/i }));
+    expect(screen.queryByAltText(/thumbnail preview/i)).not.toBeInTheDocument();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:thumbnail-preview');
   });
 });

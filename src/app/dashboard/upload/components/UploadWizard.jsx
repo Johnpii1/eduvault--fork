@@ -99,6 +99,15 @@ export default function UploadWizard() {
     }
   };
 
+  useEffect(() => () => {
+    if (thumbPreview) URL.revokeObjectURL(thumbPreview);
+  }, [thumbPreview]);
+
+  const removeThumbnail = () => {
+    setThumbFile(null);
+    setThumbPreview(null);
+  };
+
   const validateStep = (step) => {
     switch (step) {
       case 1:
@@ -522,23 +531,24 @@ export default function UploadWizard() {
 
                 <div>
                   <label htmlFor="thumbnail-upload" className="block text-sm font-medium mb-2">Thumbnail Image (Optional)</label>
-                  <div className="flex items-center gap-4">
+                  <p id="thumbnail-upload-hint" className="mb-2 text-xs text-gray-500">JPG, PNG, or WEBP up to 5MB. Preview your cover before publishing.</p>
+                  <div className="flex flex-wrap items-center gap-4">
                     <input
                       type="file"
                       id="thumbnail-upload"
-                      accept="image/*"
+                      accept="image/jpeg,image/png,image/webp"
                       onChange={handleThumbChange}
+                      aria-describedby="thumbnail-upload-hint"
                       className="text-sm"
                     />
                     {thumbPreview && (
-                      <Image
-                        src={thumbPreview}
-                        alt="Thumbnail preview"
-                        width={64}
-                        height={64}
-                        unoptimized
-                        className="rounded object-cover border"
-                      />
+                      <div className="space-y-2" aria-live="polite">
+                        <Image src={thumbPreview} alt={`Thumbnail preview for ${thumbFile?.name || "selected cover"}`} width={160} height={90} unoptimized className="aspect-video rounded-lg border object-cover" />
+                        <div className="flex items-center justify-between gap-3 text-xs text-gray-600">
+                          <span className="max-w-32 truncate" title={thumbFile?.name}>{thumbFile?.name}</span>
+                          <button type="button" onClick={removeThumbnail} className="font-medium text-red-600 hover:text-red-700">Remove</button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>
