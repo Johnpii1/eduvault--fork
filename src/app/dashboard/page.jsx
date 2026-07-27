@@ -6,6 +6,7 @@ import LatestActivity from "./components/LatestActivity";
 import TopCreators from "./components/TopCreators";
 import SavedMaterialsSection from "./components/SavedMaterialsSection";
 import RecentlyViewedSection from "./components/RecentlyViewedSection";
+import RevenueChart from "@/components/dashboard/RevenueChart";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import jwt from "jsonwebtoken";
@@ -76,7 +77,7 @@ export default async function DashboardPage() {
                 <div className="lg:col-span-2 space-y-8">
                     <SavedMaterialsSection />
                     <LatestActivity />
-                    {/* Placeholder for future performance charts could go here */}
+                    <RevenueChart />
                 </div>
 
                 {/* Right Column (Discovery Focus - 1/3 width) */}
