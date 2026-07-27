@@ -284,3 +284,62 @@ export async function checkBuyerTrustline(publicKey, assetCode, issuerAddress) {
 
   return { hasTrustline: true, balance: trustline.balance, issuer };
 }
+
+// ---------------------------------------------------------------------------
+// Node latency measurement (issue #355)
+// ---------------------------------------------------------------------------
+
+export const LATENCY_THRESHOLDS = { green: 300, yellow: 800 };
+
+/**
+ * Classify a measured latency into a traffic-light status.
+ *
+ * @param {number|null} latencyMs - measured latency, or null when the
+ *   request failed or timed out.
+ * @returns {'green'|'yellow'|'red'}
+ *   green  < 300ms, yellow 300–800ms, red > 800ms or unreachable.
+ */
+export function classifyLatency(latencyMs) {
+  if (latencyMs === null || !Number.isFinite(latencyMs)) return 'red';
+  if (latencyMs < LATENCY_THRESHOLDS.green) return 'green';
+  if (latencyMs <= LATENCY_THRESHOLDS.yellow) return 'yellow';
+  return 'red';
+}
+
+/**
+ * Measure round-trip latency to a Horizon node with a single lightweight
+ * request to its root document. Returns null latency when the node is
+ * unreachable or slower than `timeoutMs`, so callers can render a
+ * disconnected state instead of hanging.
+ *
+ * @param {{ url?: string, timeoutMs?: number, fetchImpl?: typeof fetch }} [opts]
+ * @returns {Promise<{ url: string, latencyMs: number|null, status: 'green'|'yellow'|'red' }>}
+ */
+export async function measureHorizonLatency({
+  url = PRIMARY_URL,
+  timeoutMs = 5000,
+  fetchImpl = typeof fetch !== 'undefined' ? fetch : undefined,
+} = {}) {
+  if (!fetchImpl) return { url, latencyMs: null, status: 'red' };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = Date.now();
+
+  try {
+    const res = await fetchImpl(url, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      return { url, latencyMs: null, status: 'red' };
+    }
+    const latencyMs = Date.now() - startedAt;
+    return { url, latencyMs, status: classifyLatency(latencyMs) };
+  } catch {
+    return { url, latencyMs: null, status: 'red' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
