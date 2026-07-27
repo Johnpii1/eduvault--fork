@@ -13,7 +13,7 @@ function PriceLine({ price, currency, rating, reviewsCount }) {
           height={28}
           className="rounded-full"
         />
-        <span className="text-xl sm:text-2xl font-bold text-gray-900">
+        <span className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-foreground">
           {price} {currency || "XLM"}
         </span>
       </div>
@@ -21,9 +21,9 @@ function PriceLine({ price, currency, rating, reviewsCount }) {
         {rating && rating !== "New" ? (
           <span className="text-yellow-500">{rating}</span>
         ) : (
-          <span className="text-gray-400">No ratings yet</span>
+          <span className="text-gray-400 dark:text-muted-foreground">No ratings yet</span>
         )}
-        <span className="text-gray-400">({reviewsCount || 0} reviews)</span>
+        <span className="text-gray-400 dark:text-muted-foreground">({reviewsCount || 0} reviews)</span>
       </div>
     </div>
   );

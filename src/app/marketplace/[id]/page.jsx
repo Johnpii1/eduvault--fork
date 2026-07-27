@@ -15,6 +15,7 @@ import Navbar from "@/components/Navbar";
 import ResourceStatusBadge from "@/components/materials/ResourceStatusBadge";
 import RecommendedMaterials from "@/components/materials/RecommendedMaterials";
 import MaterialReviewPanel from "@/components/materials/MaterialReviewPanel";
+import ReportModal from "@/components/ReportModal";
 import { trackRecentlyViewed } from "@/hooks/useRecentlyViewed";
 import BuyNowModal from "./modals/BuyNowModal";
 import PreviewBlock from "./components/PreviewBlock";
@@ -22,7 +23,6 @@ import PreviewStat from "./components/PreviewStat";
 import CreatorCard from "./components/CreatorCard";
 import PurchaseCard from "./components/PurchaseCard";
 import RevisionHistoryPanel from "./components/RevisionHistoryPanel";
-import ReportModal from "./components/ReportModal";
 import { useMaterialHistory } from "./hooks/useMaterialHistory";
 import { getPreviewImage, getPreviewCounts, hasCoverImage } from "./components/utils";
 
@@ -78,7 +78,7 @@ export default function MaterialDetailsPage() {
   return (
     <>
       <Navbar />
-      <main className="relative bg-[#fffaf6] min-h-screen py-6 sm:py-10 px-4 sm:px-6 md:px-10 lg:px-20">
+      <main className="relative bg-background min-h-screen py-6 sm:py-10 px-4 sm:px-6 md:px-10 lg:px-20">
         <div
           className="absolute inset-0 bg-[linear-gradient(to_right,#f2ede8_1px,transparent_1px),linear-gradient(to_bottom,#f2ede8_1px,transparent_1px)] bg-[size:40px_40px] opacity-70 pointer-events-none -z-10"
           aria-hidden="true"
@@ -95,28 +95,28 @@ export default function MaterialDetailsPage() {
                 className="max-w-6xl mx-auto"
               >
                 <nav aria-label="Breadcrumb" className="mb-4 sm:mb-6">
-                  <p className="text-xs sm:text-sm text-gray-500 break-words">
+                  <p className="text-xs sm:text-sm text-gray-500 dark:text-muted-foreground break-words">
                     <Link
                       href="/marketplace"
                       className="text-blue-600 hover:underline focus-visible:ring-2 focus-visible:ring-blue-500 rounded-sm"
                     >
                       Marketplace
                     </Link>{" "}
-                    &rarr; <span className="text-gray-700">{material.title}</span>
+                    &rarr; <span className="text-gray-700 dark:text-foreground/80">{material.title}</span>
                   </p>
                 </nav>
 
                 <header className="mb-6 sm:mb-8">
-                  <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 break-words">
+                  <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 dark:text-foreground break-words">
                     {material.title}
                   </h1>
                   <div className="mt-3 flex flex-wrap items-center gap-3">
                     <ResourceStatusBadge material={material} />
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-blue-700 bg-blue-50 border border-blue-200">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30 border border-blue-200">
                       Current Revision: v{material.version || 1}
                     </span>
                   </div>
-                  <p className="mt-3 text-sm sm:text-base text-gray-600 leading-relaxed max-w-3xl break-words">
+                  <p className="mt-3 text-sm sm:text-base text-gray-600 dark:text-muted-foreground leading-relaxed max-w-3xl break-words">
                     {material.shortSummary || material.description || "Creator preview not shared yet."}
                   </p>
                   {material.tags?.length ? (
@@ -125,9 +125,9 @@ export default function MaterialDetailsPage() {
                         <span
                           key={i}
                           role="listitem"
-                          className="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-700 px-3 py-1 rounded-full"
+                          className="inline-flex items-center gap-1 text-xs bg-gray-100 dark:bg-surface-muted text-gray-700 dark:text-foreground/80 px-3 py-1 rounded-full"
                         >
-                          <FaTag aria-hidden="true" className="text-[10px] text-gray-400" />
+                          <FaTag aria-hidden="true" className="text-[10px] text-gray-400 dark:text-muted-foreground" />
                           #{tag}
                         </span>
                       ))}
@@ -137,7 +137,7 @@ export default function MaterialDetailsPage() {
 
                 <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 lg:gap-8 items-start">
                   <div className="space-y-6 lg:space-y-8 min-w-0 order-2 lg:order-1">
-                    <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-200">
+                    <div className="bg-white dark:bg-surface-strong rounded-2xl overflow-hidden shadow-sm border border-gray-200 dark:border-border-strong">
                       <Image
                         src={getPreviewImage(material)}
                         alt={material.title}
@@ -160,32 +160,32 @@ export default function MaterialDetailsPage() {
                     </section>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5 lg:gap-6">
-                      <section className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-sm">
-                        <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">About</h2>
-                        <p className="text-sm text-gray-600 leading-relaxed break-words">
+                      <section className="bg-white dark:bg-surface-strong border border-gray-200 dark:border-border-strong rounded-2xl p-5 sm:p-6 shadow-sm">
+                        <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-foreground mb-3">About</h2>
+                        <p className="text-sm text-gray-600 dark:text-muted-foreground leading-relaxed break-words">
                           {material.shortSummary || material.description}
                         </p>
                       </section>
                       <CreatorCard author={material.author} creator={material.creator} createdAt={material.createdAt} />
                     </div>
 
-                    <div className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-sm">
-                      <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">Performance Summary</h2>
+                    <div className="bg-white dark:bg-surface-strong border border-gray-200 dark:border-border-strong rounded-2xl p-5 sm:p-6 shadow-sm">
+                      <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-foreground mb-4">Performance Summary</h2>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                        <div className="rounded-xl bg-blue-50 p-4">
-                          <p className="text-[10px] text-gray-500 font-bold tracking-wider uppercase">Views</p>
+                        <div className="rounded-xl bg-blue-50 dark:bg-blue-900/30 p-4">
+                          <p className="text-[10px] text-gray-500 dark:text-muted-foreground font-bold tracking-wider uppercase">Views</p>
                           <p className="mt-1 text-2xl font-bold text-blue-600">{material.viewCount || 0}</p>
                         </div>
-                        <div className="rounded-xl bg-emerald-50 p-4">
-                          <p className="text-[10px] text-gray-500 font-bold tracking-wider uppercase">Saves</p>
+                        <div className="rounded-xl bg-emerald-50 dark:bg-emerald-900/30 p-4">
+                          <p className="text-[10px] text-gray-500 dark:text-muted-foreground font-bold tracking-wider uppercase">Saves</p>
                           <p className="mt-1 text-2xl font-bold text-emerald-600">{material.saveCount || 0}</p>
                         </div>
-                        <div className="rounded-xl bg-amber-50 p-4">
-                          <p className="text-[10px] text-gray-500 font-bold tracking-wider uppercase">Requests</p>
+                        <div className="rounded-xl bg-amber-50 dark:bg-amber-900/30 p-4">
+                          <p className="text-[10px] text-gray-500 dark:text-muted-foreground font-bold tracking-wider uppercase">Requests</p>
                           <p className="mt-1 text-2xl font-bold text-amber-600">{material.accessCount || 0}</p>
                         </div>
-                        <div className="rounded-xl bg-pink-50 p-4">
-                          <p className="text-[10px] text-gray-500 font-bold tracking-wider uppercase">Likes</p>
+                        <div className="rounded-xl bg-pink-50 dark:bg-pink-900/30 p-4">
+                          <p className="text-[10px] text-gray-500 dark:text-muted-foreground font-bold tracking-wider uppercase">Likes</p>
                           <p className="mt-1 text-2xl font-bold text-pink-600">{material.likes || 0}</p>
                         </div>
                       </div>
@@ -196,57 +196,57 @@ export default function MaterialDetailsPage() {
                       <PreviewBlock title="Table of contents" emptyLabel="The creator has not shared a table of contents yet." items={material.tableOfContents} icon={FaListUl} />
                       <PreviewBlock title="Sample notes" emptyLabel="No sample notes were shared for this listing." items={material.sampleNotes} icon={FaStickyNote} />
 
-                      <section className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-sm h-full">
-                        <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">On-chain verification</h2>
-                        <p className="text-sm text-gray-600 leading-relaxed mb-4">
+                      <section className="bg-white dark:bg-surface-strong border border-gray-200 dark:border-border-strong rounded-2xl p-5 sm:p-6 shadow-sm h-full">
+                        <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-foreground mb-3">On-chain verification</h2>
+                        <p className="text-sm text-gray-600 dark:text-muted-foreground leading-relaxed mb-4">
                           EduVault publishes marketplace metadata through Soroban contracts so buyers can verify authenticity before paying.
                         </p>
                         <p className="flex items-center gap-2 text-sm">
-                          <strong className="text-gray-800">Status:</strong>
+                          <strong className="text-gray-800 dark:text-foreground">Status:</strong>
                           {material.verified ? (
-                            <span className="text-green-700 flex items-center gap-1 text-xs font-semibold">
+                            <span className="text-green-700 dark:text-green-400 flex items-center gap-1 text-xs font-semibold">
                               <FaCheckCircle aria-hidden="true" /> Ready for Soroban
                             </span>
                           ) : (
-                            <span className="text-amber-700 text-xs font-semibold">Not verified yet</span>
+                            <span className="text-amber-700 dark:text-amber-400 text-xs font-semibold">Not verified yet</span>
                           )}
                         </p>
                       </section>
 
-                      <div className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-sm h-full">
-                        <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-3">Resource Details</h2>
+                      <div className="bg-white dark:bg-surface-strong border border-gray-200 dark:border-border-strong rounded-2xl p-5 sm:p-6 shadow-sm h-full">
+                        <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-foreground mb-3">Resource Details</h2>
                         <dl className="space-y-3 text-sm">
                           {material.category && (
                             <div className="flex justify-between items-center">
-                              <dt className="text-gray-500 font-medium">Category</dt>
-                              <dd className="text-gray-800 font-semibold capitalize">{material.category}</dd>
+                              <dt className="text-gray-500 dark:text-muted-foreground font-medium">Category</dt>
+                              <dd className="text-gray-800 dark:text-foreground font-semibold capitalize">{material.category}</dd>
                             </div>
                           )}
                           {material.subject && (
                             <div className="flex justify-between items-center">
-                              <dt className="text-gray-500 font-medium">Subject</dt>
-                              <dd className="text-gray-800 font-semibold">{material.subject}</dd>
+                              <dt className="text-gray-500 dark:text-muted-foreground font-medium">Subject</dt>
+                              <dd className="text-gray-800 dark:text-foreground font-semibold">{material.subject}</dd>
                             </div>
                           )}
                           {material.level && (
                             <div className="flex justify-between items-center">
-                              <dt className="text-gray-500 font-medium">Level</dt>
-                              <dd className="text-gray-800 font-semibold capitalize">{material.level}</dd>
+                              <dt className="text-gray-500 dark:text-muted-foreground font-medium">Level</dt>
+                              <dd className="text-gray-800 dark:text-foreground font-semibold capitalize">{material.level}</dd>
                             </div>
                           )}
                           <div className="flex justify-between items-center">
-                            <dt className="text-gray-500 font-medium">File Type</dt>
-                            <dd className="text-gray-800 font-semibold uppercase">{material.fileType || "PDF"}</dd>
+                            <dt className="text-gray-500 dark:text-muted-foreground font-medium">File Type</dt>
+                            <dd className="text-gray-800 dark:text-foreground font-semibold uppercase">{material.fileType || "PDF"}</dd>
                           </div>
                           {material.pages && (
                             <div className="flex justify-between items-center">
-                              <dt className="text-gray-500 font-medium">Pages</dt>
-                              <dd className="text-gray-800 font-semibold">{material.pages}</dd>
+                              <dt className="text-gray-500 dark:text-muted-foreground font-medium">Pages</dt>
+                              <dd className="text-gray-800 dark:text-foreground font-semibold">{material.pages}</dd>
                             </div>
                           )}
                           <div className="flex justify-between items-center">
-                            <dt className="text-gray-500 font-medium">Visibility</dt>
-                            <dd className="text-gray-800 font-semibold capitalize">{material.visibility || "Public"}</dd>
+                            <dt className="text-gray-500 dark:text-muted-foreground font-medium">Visibility</dt>
+                            <dd className="text-gray-800 dark:text-foreground font-semibold capitalize">{material.visibility || "Public"}</dd>
                           </div>
                         </dl>
                       </div>
