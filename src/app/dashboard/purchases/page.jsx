@@ -291,7 +291,7 @@ export default function PurchasesPage() {
     <div className="min-h-screen bg-gray-50 text-gray-900">
       {/* Page header */}
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">My Purchases</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">My Library</h1>
         <p className="text-sm text-gray-500">
           Materials you own — access is verified by your on-chain entitlement.
         </p>

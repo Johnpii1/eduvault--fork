@@ -217,6 +217,27 @@ fn setup_purchase(
     )
 }
 
+#[test]
+fn entitlement_check_is_scoped_to_the_purchasing_wallet() {
+    let env = Env::default();
+    let (_contract_id, client, buyer, _creator, _asset, material_id, purchase_id) =
+        setup_purchase(&env);
+    let different_wallet = Address::generate(&env);
+
+    assert!(client.has_entitlement(&material_id, &buyer));
+    assert_eq!(
+        client
+            .get_entitlement(&material_id, &buyer)
+            .unwrap()
+            .purchase_id,
+        purchase_id
+    );
+    assert!(!client.has_entitlement(&material_id, &different_wallet));
+    assert!(client
+        .get_entitlement(&material_id, &different_wallet)
+        .is_none());
+}
+
 // ============== Initialization Tests ==============
 
 #[test]

@@ -41,7 +41,7 @@ export default function Sidebar() {
 	];
 
 	const learnerItems = [
-		{ icon: <FaBoxOpen />, label: "My Purchases", href: "/dashboard/purchases" },
+		{ icon: <FaBoxOpen />, label: "My Library", href: "/dashboard/library" },
 		{ icon: <FaHeart />, label: "Favourites", href: "/dashboard/favourites" },
 		{ icon: <FaHistory />, label: "History", href: "/dashboard/history" },
 	];
