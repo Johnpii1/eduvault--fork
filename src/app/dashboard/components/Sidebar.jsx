@@ -36,7 +36,7 @@ export default function Sidebar() {
 	];
 
 	const financeItems = [
-		{ icon: <FaDollarSign />, label: "Analytics & Sales", href: "/dashboard/analytics" },
+		{ icon: <FaDollarSign />, label: "Earnings", href: "/dashboard/earnings" },
 		{ icon: <FaWallet />, label: "Payout Settings", href: "/dashboard/settings" },
 	];
 

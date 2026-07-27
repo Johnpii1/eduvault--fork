@@ -182,8 +182,8 @@ export default function MyMaterialsPage() {
 
   const materialCount = materials?.length || 0;
   const publicCount = materials?.filter((material) => material.visibility === "public").length || 0;
-  const totalSales = materials?.reduce((sum, material) => sum + Number(material.sales || 0), 0) || 0;
-  const totalRevenue = materials?.reduce((sum, material) => sum + Number(material.revenue || 0), 0) || 0;
+  const paidCount = materials?.filter((material) => Number(material.price) > 0).length || 0;
+  const estimatedRevenue = materials?.reduce((sum, material) => sum + Number(material.price || 0), 0) || 0;
 
   if (!address) {
     return (
@@ -197,22 +197,14 @@ export default function MyMaterialsPage() {
 
   return (
     <div className="text-gray-900">
-      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold mb-1">My Materials</h1>
-          <p className="text-sm text-gray-500">
-            Manage your published educational materials. Editable fields can be updated after publishing.
-          </p>
-        </div>
-        <a
-          href="/dashboard/analytics"
-          className="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg hover:bg-slate-50 transition-colors whitespace-nowrap"
-        >
-          View detailed analytics
-        </a>
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold mb-1">My Materials</h1>
+        <p className="text-sm text-gray-500">
+          Manage your published educational materials. Editable fields can be updated after publishing.
+        </p>
       </div>
 
-      <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-8 grid gap-4 md:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-sm font-medium text-slate-500">Published materials</p>
           <p className="mt-2 text-2xl font-semibold text-slate-950">{materialCount}</p>
@@ -222,12 +214,9 @@ export default function MyMaterialsPage() {
           <p className="mt-2 text-2xl font-semibold text-slate-950">{publicCount}</p>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-sm font-medium text-slate-500">Total sales</p>
-          <p className="mt-2 text-2xl font-semibold text-slate-950">{totalSales}</p>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-sm font-medium text-slate-500">Total revenue</p>
-          <p className="mt-2 text-2xl font-semibold text-slate-950">{totalRevenue.toFixed(2)} XLM</p>
+          <p className="text-sm font-medium text-slate-500">Estimated revenue</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-950">{estimatedRevenue.toFixed(2)} XLM</p>
+          <p className="mt-1 text-xs text-slate-500">{paidCount} paid resources available</p>
         </div>
       </div>
 
@@ -274,7 +263,7 @@ export default function MyMaterialsPage() {
             <div className="mb-4 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-slate-950">Sales snapshot</h2>
-                <p className="text-sm text-slate-500">Completed sales and revenue per material, based on confirmed purchases.</p>
+                <p className="text-sm text-slate-500">Track the pricing and visibility of the materials you&apos;ve published.</p>
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -283,9 +272,8 @@ export default function MyMaterialsPage() {
                   <tr className="border-b border-slate-200 text-slate-500">
                     <th className="px-3 py-2 font-medium">Material</th>
                     <th className="px-3 py-2 font-medium">Price</th>
-                    <th className="px-3 py-2 font-medium">Sales</th>
-                    <th className="px-3 py-2 font-medium">Revenue</th>
                     <th className="px-3 py-2 font-medium">Visibility</th>
+                    <th className="px-3 py-2 font-medium">Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -293,9 +281,8 @@ export default function MyMaterialsPage() {
                     <tr key={material._id} className="border-b border-slate-100 last:border-0">
                       <td className="px-3 py-3 font-medium text-slate-800">{material.title}</td>
                       <td className="px-3 py-3 text-slate-600">{material.price ? `${material.price} XLM` : "Free"}</td>
-                      <td className="px-3 py-3 text-slate-600">{material.sales || 0}</td>
-                      <td className="px-3 py-3 text-slate-600">{Number(material.revenue || 0).toFixed(2)} XLM</td>
                       <td className="px-3 py-3 text-slate-600 capitalize">{material.visibility || "public"}</td>
+                      <td className="px-3 py-3 text-slate-600">{material.updatedAt ? "Updated" : "Published"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -345,10 +332,6 @@ export default function MyMaterialsPage() {
                       {material.visibility}
                     </span>
                   </div>
-
-                  <p className="text-xs text-gray-500">
-                    {material.sales || 0} sale{material.sales === 1 ? "" : "s"} · {Number(material.revenue || 0).toFixed(2)} XLM earned
-                  </p>
 
                   {material.updatedAt && (
                     <p className="text-xs text-gray-400">

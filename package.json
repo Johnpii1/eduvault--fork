@@ -22,8 +22,6 @@
     "test:contracts": "hardhat test",
     "test:integration": "vitest run test/integration",
     "test:backend": "node --test tests/backend/*.test.mjs",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui",
     "audit:deps": "npm audit --audit-level=critical",
     "audit:deps:high": "npm audit --audit-level=high",
     "audit:deps:critical": "npm audit --audit-level=critical",
@@ -62,7 +60,6 @@
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-ethers": "^3.1.2",
-    "@playwright/test": "^1.62.0",
     "@tailwindcss/postcss": "^4.2.3",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",

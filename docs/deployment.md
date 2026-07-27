@@ -185,34 +185,20 @@ Or push to the `main` branch — Vercel auto-deploys on every push.
 
 ## 5. CI/CD — GitHub Actions
 
-The repository ships with the following workflows:
+The repository ships with two workflows:
 
 | Workflow | File | Trigger |
 |---|---|---|
-| Frontend CI (lint + typecheck + test + build) | `.github/workflows/frontend.yml` | PR / push to `main` or `develop` |
 | Backend CI (lint + build) | `.github/workflows/backend.yml` | PR / push to `main` or `develop` |
-| Deploy Frontend (Vercel production) | `.github/workflows/deploy-frontend.yml` | Automatically after **Frontend CI** succeeds on `main` + manual |
 | MongoDB daily backup | `.github/workflows/backup.yml` | Daily cron at 02:00 UTC + manual |
 
-### Frontend deployment pipeline
+### Required GitHub Secrets for backup workflow
 
-`deploy-frontend.yml` deploys the Next.js app to Vercel **production** whenever the `Frontend CI` workflow completes successfully on `main` — merges that fail lint, typecheck, tests, or the build never reach a deploy. It can also be run manually from the Actions tab.
+Add the secrets listed in the _backup cron_ table in Section 1 to **Repository Settings → Secrets and variables → Actions**.
 
-Required GitHub Secrets (**Repository Settings → Secrets and variables → Actions**):
-
-| Secret | Description |
-|---|---|
-| `VERCEL_TOKEN` | Personal or team Vercel API token with deploy access |
-| `VERCEL_ORG_ID` | Vercel organization/team ID (`vercel project ls` or `.vercel/project.json` after `vercel link`) |
-| `VERCEL_PROJECT_ID` | Vercel project ID for the `eduvault` project |
-| `BACKUP_SLACK_WEBHOOK_URL` | Reused to alert on deploy failures (optional) |
-
-> If the Vercel project also has its native Git integration enabled for `main`, disable auto-deploy on that branch in the Vercel dashboard (**Settings → Git**) to avoid duplicate production deployments — this workflow is the source of truth for production deploys.
-
-### Manual triggers
+### Manual backup trigger
 
 ```
-GitHub → Actions → Deploy Frontend → Run workflow
 GitHub → Actions → MongoDB Backup → Run workflow
 ```
 
