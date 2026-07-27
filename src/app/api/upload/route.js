@@ -171,7 +171,17 @@ export async function POST(request) {
             auditLog({ event: 'upload_failed', route: 'upload', method: 'POST', status: 500, reason: `thumbnail_upload_failure: ${err.message}` })
             return NextResponse.json({ error: `Failed to upload thumbnail to storage: ${err.message}` }, { status: 500 })
           }
-        }
+          }
+
+
+
+
+
+
+
+
+
+
 
         // 6️⃣ Prepare the rest of the form data as JSON metadata
         const otherFields = {}
@@ -254,7 +264,7 @@ export async function POST(request) {
         // 8️⃣ Return the CID as storageKey plus URLs for backwards-compatibility
         return NextResponse.json({
           success: true,
-          storageKey: results.storageKey,
+          storageKey: results.storageKey || (uploadedFile && uploadedFile.cid),
           fileUrl: results.fileUrl,
           image: results.imgUrl || '',
           metadata: results.metadataUrl,

@@ -14,6 +14,8 @@ import {
   FaSpinner,
   FaExclamationTriangle,
 } from "react-icons/fa";
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useSwitchChain } from "wagmi";
+
 import { useWallet } from "@/hooks/useWallet";
 import { useCreateMaterial, useUploadFile } from "@/hooks/api/useMaterials";
 import TransactionStatusPanel from "@/components/transactions/TransactionStatusPanel";

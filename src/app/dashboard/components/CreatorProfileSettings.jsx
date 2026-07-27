@@ -47,6 +47,7 @@ export default function CreatorProfileSettings({ initialUser }) {
   const [success, setSuccess] = useState(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setForm({
       displayName: initialUser?.fullName || "",
       bio: initialUser?.bio || "",
