@@ -21,10 +21,10 @@ export default function MarketplaceFilters({
   return (
     <>
       {/* Mobile Subjects + Categories */}
-      <div className="lg:hidden w-full bg-white border-b border-gray-200">
+      <div className="lg:hidden w-full bg-white dark:bg-surface-strong border-b border-gray-200 dark:border-border-strong">
         <nav aria-label="Subject filters" className="overflow-x-auto px-4 py-3 hide-scrollbar flex gap-2">
           {subjectsLoading ? (
-            <div className="px-4 py-1.5 text-sm text-gray-500">Loading subjects...</div>
+            <div className="px-4 py-1.5 text-sm text-gray-500 dark:text-muted-foreground">Loading subjects...</div>
           ) : (
             subjects.map((subject) => (
               <button
@@ -35,7 +35,7 @@ export default function MarketplaceFilters({
                 className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm transition-all focus-visible:ring-2 focus-visible:ring-blue-500 ${
                   activeSubject === subject
                     ? "bg-blue-600 text-white font-medium shadow-sm"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    : "bg-gray-100 dark:bg-surface-muted text-gray-600 dark:text-muted-foreground hover:bg-gray-200 dark:hover:bg-surface-strong"
                 }`}
               >
                 {subject}
@@ -54,7 +54,7 @@ export default function MarketplaceFilters({
                 className={`whitespace-nowrap px-3 py-1 rounded-full text-xs transition-all focus-visible:ring-2 focus-visible:ring-indigo-500 ${
                   activeCategory === cat.id
                     ? "bg-indigo-600 text-white font-medium shadow-sm"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    : "bg-gray-100 dark:bg-surface-muted text-gray-600 dark:text-muted-foreground hover:bg-gray-200 dark:hover:bg-surface-strong"
                 }`}
               >
                 {cat.label}
@@ -65,12 +65,12 @@ export default function MarketplaceFilters({
       </div>
 
       {/* Sidebar */}
-      <aside className="hidden lg:block w-72 bg-white border-r border-gray-200 px-6 py-10 sticky top-0 h-screen overflow-y-auto">
+      <aside className="hidden lg:block w-72 bg-white dark:bg-surface-strong border-r border-gray-200 dark:border-border-strong px-6 py-10 sticky top-0 h-screen overflow-y-auto">
         <nav aria-label="Subject filters">
-          <h3 className="text-sm font-bold text-gray-900 mb-6 uppercase tracking-wider">Subjects</h3>
+          <h3 className="text-sm font-bold text-gray-900 dark:text-foreground mb-6 uppercase tracking-wider">Subjects</h3>
           <ul role="list" className="space-y-1">
             {subjectsLoading ? (
-              <li role="listitem"><div className="px-3 py-2 text-sm text-gray-500">Loading subjects...</div></li>
+              <li role="listitem"><div className="px-3 py-2 text-sm text-gray-500 dark:text-muted-foreground">Loading subjects...</div></li>
             ) : (
               subjects.map((subject) => (
                 <li key={subject} role="listitem">
@@ -80,8 +80,8 @@ export default function MarketplaceFilters({
                     aria-selected={activeSubject === subject}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-all focus-visible:ring-2 focus-visible:ring-blue-500 ${
                       activeSubject === subject
-                        ? "bg-blue-50 text-blue-700 font-semibold"
-                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                        ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-semibold"
+                        : "text-gray-600 dark:text-muted-foreground hover:bg-gray-50 dark:hover:bg-surface-muted hover:text-gray-900 dark:hover:text-foreground"
                     }`}
                   >
                     {subject}
@@ -94,7 +94,7 @@ export default function MarketplaceFilters({
 
         {categories.length > 0 && (
           <nav aria-label="Category filters" className="mt-8">
-            <h3 className="text-sm font-bold text-gray-900 mb-6 uppercase tracking-wider">Categories</h3>
+            <h3 className="text-sm font-bold text-gray-900 dark:text-foreground mb-6 uppercase tracking-wider">Categories</h3>
             <ul role="list" className="space-y-1">
               {[{ id: "All", label: "All Categories" }, ...categories].map((cat) => (
                 <li key={cat.id} role="listitem">
@@ -104,8 +104,8 @@ export default function MarketplaceFilters({
                     aria-selected={activeCategory === cat.id}
                     className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-all focus-visible:ring-2 focus-visible:ring-blue-500 ${
                       activeCategory === cat.id
-                        ? "bg-indigo-50 text-indigo-700 font-semibold"
-                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                        ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-semibold"
+                        : "text-gray-600 dark:text-muted-foreground hover:bg-gray-50 dark:hover:bg-surface-muted hover:text-gray-900 dark:hover:text-foreground"
                     }`}
                   >
                     {cat.label}
@@ -118,22 +118,22 @@ export default function MarketplaceFilters({
       </aside>
 
       {/* Filter bar */}
-      <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm mb-8 flex flex-col md:flex-row gap-4 items-center justify-between">
+      <div className="bg-white dark:bg-surface-strong p-4 rounded-xl border border-gray-200 dark:border-border-strong shadow-sm mb-8 flex flex-col md:flex-row gap-4 items-center justify-between">
         <div className="relative w-full md:max-w-md">
-          <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+          <FaSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-muted-foreground" />
           <input
             type="text"
             placeholder="Search materials..."
             aria-label="Search materials"
             value={searchQuery}
             onChange={(e) => { onSearchChange(e.target.value); onPageReset(); }}
-            className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus-visible:ring-2 focus-visible:ring-blue-500"
+            className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-surface-muted border border-gray-200 dark:border-border-strong rounded-lg text-sm focus-visible:ring-2 focus-visible:ring-blue-500"
           />
         </div>
 
         <div className="flex items-center gap-3 overflow-x-auto">
-          <div className="flex items-center bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-            <FaFilter className="text-gray-400 mr-2 text-xs" />
+          <div className="flex items-center bg-gray-50 dark:bg-surface-muted border border-gray-200 dark:border-border-strong rounded-lg px-3 py-2">
+            <FaFilter className="text-gray-400 dark:text-muted-foreground mr-2 text-xs" />
             <select
               value={activeSubject}
               onChange={(e) => { onSubjectChange(e.target.value); onPageReset(); }}
@@ -147,8 +147,8 @@ export default function MarketplaceFilters({
             </select>
           </div>
 
-          <div className="flex items-center bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 hidden md:flex">
-            <span className="text-gray-500 text-sm mr-2">Level:</span>
+          <div className="flex items-center bg-gray-50 dark:bg-surface-muted border border-gray-200 dark:border-border-strong rounded-lg px-3 py-2 hidden md:flex">
+            <span className="text-gray-500 dark:text-muted-foreground text-sm mr-2">Level:</span>
             <select
               value={activeLevel}
               onChange={(e) => { onLevelChange(e.target.value); onPageReset(); }}
@@ -161,8 +161,8 @@ export default function MarketplaceFilters({
             </select>
           </div>
 
-          <div className="flex items-center bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-            <span className="text-gray-500 text-sm mr-2">Sort:</span>
+          <div className="flex items-center bg-gray-50 dark:bg-surface-muted border border-gray-200 dark:border-border-strong rounded-lg px-3 py-2">
+            <span className="text-gray-500 dark:text-muted-foreground text-sm mr-2">Sort:</span>
             <select
               value={sortBy}
               onChange={(e) => onSortByChange(e.target.value)}
