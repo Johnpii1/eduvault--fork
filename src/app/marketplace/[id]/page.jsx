@@ -23,6 +23,8 @@ import PreviewStat from "./components/PreviewStat";
 import CreatorCard from "./components/CreatorCard";
 import PurchaseCard from "./components/PurchaseCard";
 import RevisionHistoryPanel from "./components/RevisionHistoryPanel";
+import ReportModal from "./components/ReportModal";
+import MaterialNotFound from "./components/MaterialNotFound";
 import { useMaterialHistory } from "./hooks/useMaterialHistory";
 import { getPreviewImage, getPreviewCounts, hasCoverImage } from "./components/utils";
 
@@ -83,7 +85,16 @@ export default function MaterialDetailsPage() {
           className="absolute inset-0 bg-[linear-gradient(to_right,#f2ede8_1px,transparent_1px),linear-gradient(to_bottom,#f2ede8_1px,transparent_1px)] bg-[size:40px_40px] opacity-70 pointer-events-none -z-10"
           aria-hidden="true"
         />
-        <QueryStateProvider query={materialQuery}>
+        <QueryStateProvider
+          query={materialQuery}
+          errorComponent={
+            // 400/404 are terminal (bad or deleted id) — retrying cannot help,
+            // so show a not-found state instead of the generic retry screen.
+            materialQuery.error?.status === 404 || materialQuery.error?.status === 400 ? (
+              <MaterialNotFound />
+            ) : undefined
+          }
+        >
           {(material) => {
             const counts = getPreviewCounts(material);
             return (
