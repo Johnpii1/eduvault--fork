@@ -158,6 +158,14 @@ export async function PATCH(request) {
           updateFields.websiteUrl = sanitizeString(profileData.websiteUrl, { maxLength: 256 });
         }
 
+        if (profileData.coverPhoto && typeof profileData.coverPhoto === 'string') {
+          updateFields.coverPhoto = sanitizeString(profileData.coverPhoto, { maxLength: 500000 });
+        }
+
+        if (profileData.coverUrl && typeof profileData.coverUrl === 'string') {
+          updateFields.coverUrl = sanitizeString(profileData.coverUrl, { maxLength: 500000 });
+        }
+
         if (
           profileData.payoutWalletAddress !== undefined ||
           profileData.preferredPayoutCurrency !== undefined ||
