@@ -152,7 +152,7 @@ describe('checkBuyerTrustline', () => {
     expect(result.hasTrustline).toBe(false);
   });
 
-  it('does not match native balance as trustline', async () => {
+  it('returns hasTrustline=true for XLM without requiring trustline', async () => {
     mockLoadAccount.mockResolvedValue({
       balances: [
         { asset_type: 'native', balance: '1000.00' },
@@ -160,6 +160,18 @@ describe('checkBuyerTrustline', () => {
     });
 
     const result = await checkBuyerTrustline('GABC123', 'XLM');
-    expect(result.hasTrustline).toBe(false);
+    expect(result.hasTrustline).toBe(true);
+    expect(result.balance).toBe('1000.00');
+    expect(result.issuer).toBeNull();
+  });
+
+  it('returns XLM balance as zero when account has no native balance entry', async () => {
+    mockLoadAccount.mockResolvedValue({
+      balances: [],
+    });
+
+    const result = await checkBuyerTrustline('GABC123', 'XLM');
+    expect(result.hasTrustline).toBe(true);
+    expect(result.balance).toBe('0');
   });
 });
