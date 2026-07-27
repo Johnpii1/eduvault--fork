@@ -3,7 +3,7 @@ import { xdr, nativeToScVal, Address, Keypair } from "@stellar/stellar-sdk";
 
 vi.mock("@/lib/email", () => ({ sendReceiptIfEligible: vi.fn().mockResolvedValue(undefined) }));
 
-import { runIndexerBatch } from "../stellarIndexer.js";
+import { runIndexerBatch, classifyIndexerError } from "../stellarIndexer.js";
 import { COLLECTIONS } from "@/lib/backend/schemaContracts";
 
 function toBase64(scVal) {
@@ -69,11 +69,15 @@ function createFakeDb() {
     }
   }
 
+  const collectionObjects = new Map();
+
   function collection(name) {
+    if (collectionObjects.has(name)) return collectionObjects.get(name);
+
     if (!collections.has(name)) collections.set(name, new Map());
     const data = collections.get(name);
 
-    return {
+    const obj = {
       async insertOne(doc) {
         if (data.has(doc._id)) {
           const err = new Error("E11000 duplicate key error");
@@ -122,6 +126,9 @@ function createFakeDb() {
         return Array.from(data.values());
       },
     };
+
+    collectionObjects.set(name, obj);
+    return obj;
   }
 
   return { collection };
@@ -153,7 +160,7 @@ describe("runIndexerBatch", () => {
 
     const result = await runIndexerBatch({ db, eventSource });
 
-    expect(result).toEqual({ applied: 1, skipped: 0, nextCursor: "cursor-1" });
+    expect(result).toEqual({ applied: 1, skipped: 0, nextCursor: "cursor-1", hadFailure: false });
 
     const purchases = db.collection(COLLECTIONS.purchases)._all();
     expect(purchases).toHaveLength(1);
@@ -216,8 +223,71 @@ describe("runIndexerBatch", () => {
     const first = await runIndexerBatch({ db, eventSource });
     const second = await runIndexerBatch({ db, eventSource });
 
-    expect(first).toEqual({ applied: 1, skipped: 0, nextCursor: "c" });
-    expect(second).toEqual({ applied: 0, skipped: 1, nextCursor: "c" });
+    expect(first).toEqual({ applied: 1, skipped: 0, nextCursor: "c", hadFailure: false });
+    expect(second).toEqual({ applied: 0, skipped: 1, nextCursor: "c", hadFailure: false });
     expect(db.collection(COLLECTIONS.purchases)._all()).toHaveLength(1);
+  });
+
+  it("does not advance the checkpoint cursor past a failed event (#469)", async () => {
+    const db = createFakeDb();
+    // Make the purchases collection's updateOne throw on every call, so the
+    // event fails to apply.
+    const purchasesCol = db.collection(COLLECTIONS.purchases);
+    purchasesCol.updateOne = async () => {
+      const err = new Error("simulated failure");
+      throw err;
+    };
+
+    const buyer = Keypair.random().publicKey();
+    const seller = Keypair.random().publicKey();
+    const asset = Keypair.random().publicKey();
+    const materialId = Buffer.alloc(32, 3);
+    const rawEvent = purchaseCompletedRawEvent({
+      id: "evt-fail",
+      purchaseId: 3,
+      materialId,
+      buyer,
+      seller,
+      asset,
+      amount: 500_000,
+    });
+
+    const eventSource = {
+      getEvents: vi.fn().mockResolvedValue({ events: [rawEvent], nextCursor: "should-not-be-used", lastLedger: 200 }),
+    };
+
+    const result = await runIndexerBatch({ db, eventSource });
+
+    expect(result.hadFailure).toBe(true);
+    expect(result.applied).toBe(0);
+    // The cursor must not jump to the RPC's `nextCursor` when a failure
+    // occurred, since that would skip past the failed event forever.
+    expect(result.nextCursor).not.toBe("should-not-be-used");
+
+    // A generic error with no recognizable transient shape classifies as
+    // poison, which is marked failed immediately rather than retried.
+    const dl = await db.collection(COLLECTIONS.deadLetterEvents).findOne({});
+    expect(dl).toBeTruthy();
+    expect(dl.status).toBe("failed");
+    expect(dl.errorClass).toBe("poison");
+  });
+});
+
+describe("classifyIndexerError", () => {
+  it("classifies network-shaped errors as transient", () => {
+    expect(classifyIndexerError({ code: "ECONNRESET" })).toBe("transient");
+    expect(classifyIndexerError({ code: "ETIMEDOUT" })).toBe("transient");
+    expect(classifyIndexerError({ message: "request timeout" })).toBe("transient");
+  });
+
+  it("classifies 5xx and 429 status-shaped errors as transient", () => {
+    expect(classifyIndexerError({ code: 500 })).toBe("transient");
+    expect(classifyIndexerError({ response: { status: 503 } })).toBe("transient");
+    expect(classifyIndexerError({ status: 429 })).toBe("transient");
+  });
+
+  it("classifies everything else as poison", () => {
+    expect(classifyIndexerError(new Error("Indexed event is missing a stable id"))).toBe("poison");
+    expect(classifyIndexerError({ code: "SOME_VALIDATION_ERROR" })).toBe("poison");
   });
 });

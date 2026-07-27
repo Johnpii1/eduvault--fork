@@ -1,5 +1,6 @@
 #![no_std]
 
+use shared_interface::{PendingAdminTransfer, MIN_ADMIN_TRANSFER_DELAY_SECS};
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, Address, Bytes, BytesN,
     Env, IntoVal, Symbol, Val, Vec,
@@ -276,6 +277,9 @@ enum DataKey {
     Settlement(u64),
     Dispute(u64),
     PurchaseBuyer(u64),
+    /// The admin address that called `transfer_admin`, so `accept_admin` can
+    /// revoke that specific admin's role once the transfer completes (#463).
+    PendingAdminFrom,
     CreatorTier(Address),
     /// Maintenance index (#464): sequential slot -> (purchase_id,
     /// material_id, buyer), populated at purchase time so
@@ -357,6 +361,11 @@ pub enum PurchaseError {
 
     // Admin transfer errors
     NoPendingAdminTransfer = 60,
+    /// `accept_admin` called before the configured transfer delay elapsed.
+    TransferDelayNotElapsed = 61,
+    /// `transfer_admin` called with a delay shorter than
+    /// `shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS`.
+    InvalidTransferDelay = 62,
 
     // Settlement / Dispute errors
     SettlementNotPending = 70,
@@ -1948,19 +1957,35 @@ impl PurchaseManager {
         Ok(())
     }
 
-    // ============== Admin Transfer (two-step) ==============
+    // ============== Admin Transfer (two-step, time-delayed — #463) ==============
 
-    /// Begin an admin ownership transfer.
+    /// Begin a time-delayed admin ownership transfer. `admin` remains fully
+    /// authoritative — and other existing admins, if any, are unaffected —
+    /// until `new_admin` calls `accept_admin`, and only after `delay_secs`
+    /// (floored at `shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS`) has
+    /// elapsed. Overwrites any transfer already pending.
     pub fn transfer_admin(
         env: Env,
         admin: Address,
         new_admin: Address,
+        delay_secs: u64,
     ) -> Result<(), PurchaseError> {
         auth::require_admin(&env, &admin)?;
 
+        if delay_secs < MIN_ADMIN_TRANSFER_DELAY_SECS {
+            return Err(PurchaseError::InvalidTransferDelay);
+        }
+
+        let now = env.ledger().timestamp();
+        let pending = PendingAdminTransfer {
+            candidate: new_admin.clone(),
+            initiated_at: now,
+            accept_after: now + delay_secs,
+        };
+        env.storage().instance().set(&DataKey::PendingAdmin, &pending);
         env.storage()
             .instance()
-            .set(&DataKey::PendingAdmin, &new_admin);
+            .set(&DataKey::PendingAdminFrom, &admin);
         extend_instance_ttl(&env);
 
         AdminTransferInitiatedEvent {
@@ -1972,23 +1997,38 @@ impl PurchaseManager {
         Ok(())
     }
 
-    /// Complete an admin ownership transfer initiated by `transfer_admin`.
+    /// Complete an admin ownership transfer initiated by `transfer_admin`,
+    /// once the configured delay has elapsed. Revokes the initiating admin's
+    /// role as part of accepting — previously, accepting only ever granted
+    /// the new admin the role and never revoked the old one, so authority
+    /// accumulated indefinitely instead of actually transferring.
     pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), PurchaseError> {
         new_admin.require_auth();
 
-        let pending: Address = env
+        let pending: PendingAdminTransfer = env
             .storage()
             .instance()
             .get(&DataKey::PendingAdmin)
             .ok_or(PurchaseError::NoPendingAdminTransfer)?;
         extend_instance_ttl(&env);
 
-        if pending != new_admin {
+        if pending.candidate != new_admin {
             return Err(PurchaseError::NotAuthorized);
+        }
+        if env.ledger().timestamp() < pending.accept_after {
+            return Err(PurchaseError::TransferDelayNotElapsed);
         }
 
         auth::set_admin_role(&env, &new_admin);
+        if let Some(previous_admin) = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&DataKey::PendingAdminFrom)
+        {
+            auth::revoke_admin_role(&env, &previous_admin);
+        }
         env.storage().instance().remove(&DataKey::PendingAdmin);
+        env.storage().instance().remove(&DataKey::PendingAdminFrom);
         extend_instance_ttl(&env);
 
         AdminTransferAcceptedEvent {
@@ -1999,8 +2039,24 @@ impl PurchaseManager {
         Ok(())
     }
 
-    /// Return the pending admin address, if a transfer is in progress.
-    pub fn get_pending_admin(env: Env) -> Option<Address> {
+    /// Cancel a pending admin transfer before it's accepted — e.g. after
+    /// nominating the wrong address. Callable by any current admin, not only
+    /// the one who initiated it, since all admins are equally trusted in
+    /// this contract's authority model.
+    pub fn cancel_admin_transfer(env: Env, admin: Address) -> Result<(), PurchaseError> {
+        auth::require_admin(&env, &admin)?;
+
+        if !env.storage().instance().has(&DataKey::PendingAdmin) {
+            return Err(PurchaseError::NoPendingAdminTransfer);
+        }
+        env.storage().instance().remove(&DataKey::PendingAdmin);
+        env.storage().instance().remove(&DataKey::PendingAdminFrom);
+        extend_instance_ttl(&env);
+        Ok(())
+    }
+
+    /// Return the pending admin transfer, if one is in progress.
+    pub fn get_pending_admin(env: Env) -> Option<PendingAdminTransfer> {
         let pending = env.storage().instance().get(&DataKey::PendingAdmin);
         extend_instance_ttl(&env);
         pending

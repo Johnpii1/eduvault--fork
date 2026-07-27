@@ -42,6 +42,20 @@ pub fn require_admin(env: &Env, caller: &Address) -> Result<(), PurchaseError> {
     Ok(())
 }
 
+/// Revoke `admin`'s admin role (#463). Used by `accept_admin_transfer` to
+/// remove the outgoing primary admin's authority once a transfer completes —
+/// previously, `accept_admin` only ever granted the new admin the role and
+/// never revoked the old one, so authority accumulated instead of moving.
+///
+/// Leaves the address's `AdminRoleIndex` maintenance-index slot in place;
+/// `extend_admin_role_ttl` already tolerates an index entry whose
+/// corresponding `AdminRole` key no longer exists (it checks `has` before
+/// extending), so a revoked admin's stale index slot is harmless.
+pub fn revoke_admin_role(env: &Env, admin: &Address) {
+    let key = AuthDataKey::AdminRole(admin.clone());
+    env.storage().persistent().remove(&key);
+}
+
 fn index_admin_role(env: &Env, admin: &Address) {
     let count: u64 = env
         .storage()
