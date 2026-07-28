@@ -3,7 +3,7 @@ import {
   normalizeCategory,
   normalizeLevel,
   validateCategorySubject,
-} from "@/lib/backend/taxonomy";
+} from "../backend/taxonomy.js";
 
 export class ValidationError extends Error {
   constructor(message, details = {}) {
@@ -185,6 +185,8 @@ export function validateMaterialPayload(body) {
     visibility,
     coverImageUrl: sanitizeString(body?.coverImageUrl, { maxLength: 2048 }) || null,
     thumbnailUrl: sanitizeString(body?.thumbnailUrl, { maxLength: 2048 }) || null,
+    tokenId: sanitizeString(body?.tokenId, { maxLength: 80 }) || null,
+    txHash: sanitizeString(body?.txHash, { maxLength: 100 }) || null,
     category,
     subject,
     level,
@@ -287,6 +289,34 @@ export function validateChangeReason(reason) {
   return sanitizeString(reason, { maxLength: 500 });
 }
 
+export function validateDateRangeQuery(searchParams, { maxRangeDays = 366, defaultRangeDays = 30 } = {}) {
+  const fromParam = searchParams.get("from");
+  const toParam = searchParams.get("to");
+
+  const to = toParam ? new Date(toParam) : new Date();
+  if (Number.isNaN(to.getTime())) {
+    throw new ValidationError("Invalid 'to' date", { field: "to" });
+  }
+
+  const from = fromParam
+    ? new Date(fromParam)
+    : new Date(to.getTime() - defaultRangeDays * 24 * 60 * 60 * 1000);
+  if (Number.isNaN(from.getTime())) {
+    throw new ValidationError("Invalid 'from' date", { field: "from" });
+  }
+
+  if (from > to) {
+    throw new ValidationError("'from' date must not be after 'to' date", { field: "from" });
+  }
+
+  const rangeDays = (to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000);
+  if (rangeDays > maxRangeDays) {
+    throw new ValidationError(`Date range cannot exceed ${maxRangeDays} days`, { field: "from" });
+  }
+
+  return { from, to };
+}
+
 export function parsePagination(searchParams, { defaultPageSize = 12, maxPageSize = 50 } = {}) {
   const page = Math.max(1, Number(searchParams.get("page") || "1"));
   const pageSize = Math.max(
@@ -298,4 +328,120 @@ export function parsePagination(searchParams, { defaultPageSize = 12, maxPageSiz
 
 export function escapeRegExp(value) {
   return sanitizeString(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const LICENSE_TYPES = [
+  "Standard License (download only)",
+  "Creative Commons",
+  "Private Use Only",
+];
+
+export function validatePrice(value, { allowZero = true } = {}) {
+  const price = Number(value ?? 0);
+  if (!Number.isFinite(price) || price < 0) {
+    throw new ValidationError("Price must be a non-negative number", { field: "price" });
+  }
+  if (!allowZero && price === 0) {
+    throw new ValidationError("Price must be greater than 0", { field: "price" });
+  }
+  if (price > 1000000) {
+    throw new ValidationError("Price cannot exceed 1,000,000", { field: "price" });
+  }
+  return price;
+}
+
+export function validateLicense(value) {
+  const clean = sanitizeString(value, { maxLength: 200 });
+  if (!clean) return null;
+  const match = LICENSE_TYPES.find(
+    (t) => t.toLowerCase() === clean.toLowerCase()
+  );
+  if (!match) {
+    throw new ValidationError(
+      `Invalid usage rights: "${clean}". Allowed: ${LICENSE_TYPES.join(", ")}`,
+      { field: "usageRights" }
+    );
+  }
+  return match;
+}
+
+export function validateUploadPayload(body) {
+  const title = sanitizeString(body?.title, { maxLength: 160 });
+  if (!title) {
+    throw new ValidationError("Title is required", { field: "title" });
+  }
+
+  const description = sanitizeString(body?.description, { maxLength: 5000 });
+
+  const price = validatePrice(body?.price);
+
+  const usageRights = validateLicense(body?.usageRights);
+
+  const visibility = sanitizeString(body?.visibility, { maxLength: 20 }) || "private";
+  if (!["private", "public", "unlisted"].includes(visibility)) {
+    throw new ValidationError("Invalid visibility", { field: "visibility" });
+  }
+
+  return { title, description, price, usageRights, visibility };
+}
+
+export function validateUploadFileMetadata(file, field) {
+  if (!file) {
+    throw new ValidationError("No file provided", { field });
+  }
+
+  const maxSize = 10 * 1024 * 1024;
+
+  if (typeof file.size !== "number" || typeof file.type !== "string") {
+    throw new ValidationError("Invalid file metadata: missing size or type", { field });
+  }
+
+  const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+
+  if (file.size > maxSize) {
+    throw new ValidationError(
+      `File size ${sizeMB}MB exceeds 10MB limit`,
+      { field }
+    );
+  }
+
+  const allowedDocumentTypes = [
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "text/plain",
+    "application/zip",
+    "application/x-zip-compressed",
+  ];
+
+  const allowedVideoTypes = [
+    "video/mp4",
+    "video/mpeg",
+    "video/quicktime",
+    "video/x-msvideo",
+    "video/webm",
+    "video/ogg",
+    "video/x-matroska",
+  ];
+
+  const allowedTypes = [...allowedDocumentTypes, ...allowedVideoTypes];
+
+  if (!allowedTypes.includes(file.type)) {
+    throw new ValidationError(
+      `Unsupported file type: ${file.type || "unknown"}. Allowed: PDF, DOC, DOCX, PPT, PPTX, XLS, XLSX, TXT, ZIP, MP4, MOV, AVI, WEBM, MKV`,
+      { field }
+    );
+  }
+
+  return {
+    size: file.size,
+    sizeMB,
+    type: file.type,
+    name: file.name || null,
+    isVideo: allowedVideoTypes.includes(file.type),
+  };
 }

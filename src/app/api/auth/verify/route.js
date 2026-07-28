@@ -1,12 +1,13 @@
 export const dynamic = "force-dynamic";
 
 import { NextResponse } from "next/server";
-import jwt from "jsonwebtoken";
 import { verifyChallenge, cleanupExpiredChallenges } from "@/lib/auth/challenge";
 import { normalizeWalletAddress } from "@/lib/api/validation";
 import { withApiHardening } from "@/lib/api/hardening";
 import { getDb } from "@/lib/mongodb";
 import { auditLog } from "@/lib/api/audit";
+import { generateAccessToken, generateRefreshToken, storeRefreshToken } from "@/lib/auth/tokenService";
+import { errorResponse } from "@/lib/utils/errorResponse";
 
 export async function POST(request) {
   return withApiHardening(
@@ -18,15 +19,25 @@ export async function POST(request) {
         const address = normalizeWalletAddress(body?.address);
         const nonce = typeof body?.nonce === "string" ? body.nonce.trim() : "";
         const signedTransactionXdr = typeof body?.signedTransactionXdr === "string" ? body.signedTransactionXdr.trim() : "";
+        const action = typeof body?.action === "string" ? body.action.trim() : "default";
+        const origin = typeof body?.origin === "string" ? body.origin.trim() : undefined;
+        const network = typeof body?.network === "string" ? body.network.trim() : undefined;
+        const contract = typeof body?.contract === "string" ? body.contract.trim() : undefined;
 
         if (!address || !nonce || !signedTransactionXdr) {
-          return NextResponse.json(
-            { error: "Missing required fields: address, nonce, signedTransactionXdr" },
-            { status: 400 }
-          );
+          return errorResponse({
+            status: 400,
+            detail: "Missing required fields: address, nonce, signedTransactionXdr",
+            instance: "/api/auth/verify",
+          });
         }
 
-        const result = await verifyChallenge(address, nonce, signedTransactionXdr);
+        const result = await verifyChallenge(address, nonce, signedTransactionXdr, {
+          action,
+          origin,
+          network,
+          contract,
+        });
 
         if (!result.valid) {
           auditLog({
@@ -37,7 +48,11 @@ export async function POST(request) {
             reason: result.reason,
             address,
           });
-          return NextResponse.json({ error: result.reason }, { status: 401 });
+          return errorResponse({
+            status: 401,
+            detail: result.reason,
+            instance: "/api/auth/verify",
+          });
         }
 
         cleanupExpiredChallenges().catch(() => {});
@@ -51,31 +66,45 @@ export async function POST(request) {
           ],
         });
 
-        const secret = process.env.JWT_SECRET;
-        if (!secret) {
-          return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
+        if (!process.env.JWT_SECRET) {
+          return errorResponse({ status: 500, detail: "Server configuration error", instance: "/api/auth/verify" });
         }
 
+        const userId = user?._id?.toString() ?? address;
         const tokenPayload = {
-          sub: user?._id?.toString() ?? address,
+          sub: userId,
           email: user?.email ?? "",
           name: user?.fullName ?? "",
           walletAddress: address,
+          action: result.sessionContext.action,
         };
-        const token = jwt.sign(tokenPayload, secret, { expiresIn: "7d" });
 
+        const accessToken = generateAccessToken(tokenPayload);
+        const refreshToken = generateRefreshToken();
+        const sessionContext = result.sessionContext;
+        await storeRefreshToken(userId, refreshToken, sessionContext);
+
+        const isProduction = process.env.NODE_ENV === "production";
         const response = NextResponse.json({
           success: true,
           user: user || null,
           isNewUser: !user,
         });
 
-        response.cookies.set("auth_token", token, {
+        response.cookies.set("auth_token", accessToken, {
           httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: "lax",
+          secure: isProduction,
+          sameSite: "strict",
           path: "/",
-          maxAge: 60 * 60 * 24 * 7,
+          maxAge: 15 * 60, // 15 minutes
+        });
+
+        response.cookies.set("refresh_token", refreshToken, {
+          httpOnly: true,
+          secure: isProduction,
+          sameSite: "strict",
+          path: "/api/auth/refresh",
+          maxAge: 7 * 24 * 60 * 60, // 7 days
         });
 
         auditLog({
@@ -84,6 +113,7 @@ export async function POST(request) {
           method: "POST",
           status: 200,
           address,
+          action: result.sessionContext.action,
         });
 
         return response;
@@ -95,7 +125,7 @@ export async function POST(request) {
           status: 500,
           reason: error.message,
         });
-        return NextResponse.json({ error: "Server error" }, { status: 500 });
+        return errorResponse({ status: 500, detail: "An unexpected error occurred.", instance: "/api/auth/verify" });
       }
     }
   );

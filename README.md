@@ -183,8 +183,16 @@ npm run test:contracts
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [Project Workflows](docs/project-workflows.md)
 - [User Flows](docs/user-flows.md)
+- [Environment Setup](docs/environment-setup.md)
+- [Contribution Guide](docs/contributing.md)
 - [Backend Contracts](docs/backend-contracts.md)
+- [Stellar Purchase Flow](docs/stellar-purchase-flow.md)
+- [Stellar Wallet Setup](docs/stellar-wallet-setup.md)
+- [Creator Publishing Guide](docs/creator-publishing-guide.md)
+- [Soroban Contract Architecture](docs/soroban-contract-architecture.md)
+- [Stellar Integration Guide](docs/stellar-integration.md)
 
 ## Deployment Notes
 
@@ -219,7 +227,9 @@ npm run test:contracts
 
 ## Contributing
 
-Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+See the [Contribution Guide](docs/contributing.md) for the development workflow, documentation expectations, testing guidance, and pull request checklist.
+
+Contributions are welcome. Please read the project contribution guide before opening a pull request.
 
 Good areas to contribute include:
 
