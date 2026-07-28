@@ -2,8 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { FaCheckCircle, FaTimes } from "react-icons/fa";
+import {
+  FaCheckCircle,
+  FaExternalLinkAlt,
+  FaShoppingBag,
+  FaTimes,
+} from "react-icons/fa";
 import { useAccount } from "wagmi";
 import { useWallet } from "@/hooks/useWallet";
 import CheckoutReceiptModal from "../../../../../components/modals/CheckoutReceiptModal";
@@ -94,19 +100,13 @@ export default function BuyNowModal({
   const [checkoutError, setCheckoutError] = useState(null);
   const [downloadError, setDownloadError] = useState(null);
   const [isDownloading, setIsDownloading] = useState(false);
-  const { loading: quoteLoading, error: quoteError, quote, refresh } = useQuote(
-    materialId,
-    selectedAsset,
-    price,
-  );
+
   const {
-    activeTransaction,
-    beginTransaction,
-    markStatus,
-    confirmTransaction,
-    failTransaction,
-    clearTransaction,
-  } = useTransactionCenter();
+    loading: quoteLoading,
+    error: quoteError,
+    quote,
+    refresh,
+  } = useQuote(materialId, selectedAsset, price);
 
   const isReceiptVisible = receiptStatus !== "idle";
   const explorerHint = useMemo(
@@ -239,8 +239,9 @@ export default function BuyNowModal({
 
       confirmTransaction({
         txHash: confirmedHash,
-        title: "Access granted",
-        message: "Payment is complete and this material is now unlocked.",
+        explorerUrl: getExplorerTxUrl(confirmedHash),
+        title: "Purchase confirmed",
+        message: "Your receipt is ready and your encrypted material can be downloaded.",
         explorerUrl: getExplorerTxUrl(confirmedHash),
       });
     } catch (err) {
