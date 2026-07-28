@@ -28,6 +28,19 @@ docker compose up -d mongodb
 npm run dev
 ```
 
+### Soroban Contract Setup
+
+If you are contributing to smart contracts, additional Rust tooling is required. See the [detailed Soroban setup instructions](docs/contributing.md#rust-and-soroban-prerequisites) in the full contribution guide.
+
+Quick summary:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup target add wasm32v1-none
+cargo install --locked soroban-cli --version 25.3.1
+cd soroban && cargo test --workspace --all-targets
+```
+
 ## Branching
 
 - Use a short descriptive branch name such as `docs/stellar-submission` or `feat/entitlement-checks`.
@@ -73,4 +86,5 @@ When opening an issue, include:
 ## Security
 
 Do not disclose secrets, private keys, or production credentials in issues or pull requests. If you discover a sensitive security issue, contact the maintainer privately before public disclosure.
-🌟 Stellar Contributors: See the [Stellar Integration Guide](docs/STELLAR_GUIDE.md) for setup instructions.
+
+🌟 Stellar Contributors: See the [Stellar Integration Guide](docs/stellar-integration.md) for setup instructions. See the [full contribution guide](docs/contributing.md) for detailed Rust and Soroban setup steps.
