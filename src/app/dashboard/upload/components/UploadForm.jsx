@@ -1,10 +1,11 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FaCloudUploadAlt } from "react-icons/fa";
 import Cropper from "react-easy-crop";
 import { useWallet } from "@/hooks/useWallet";
+import { validateThumbnail } from "@/lib/upload/validateThumbnail";
 import { WalletStatus } from "@/providers/WalletProvider";
 import { useUploadFile, useCreateMaterial } from "@/hooks/api/useMaterials";
 import { getCroppedImageBlob } from "./cropImage";
@@ -76,14 +77,26 @@ export default function UploadForm() {
     }
   };
 
+  // Object URLs must be revoked when replaced or on unmount, or every
+  // selected thumbnail leaks its blob for the lifetime of the page.
+  const thumbUrlRef = useRef(null);
+
+  const replaceThumbPreview = (url) => {
+    if (thumbUrlRef.current) URL.revokeObjectURL(thumbUrlRef.current);
+    thumbUrlRef.current = url;
+    setThumbPreview(url);
+  };
+
+  useEffect(() => () => {
+    if (thumbUrlRef.current) URL.revokeObjectURL(thumbUrlRef.current);
+  }, []);
+
   const handleThumbChange = (e) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          thumb: `File size ${(file.size / (1024 * 1024)).toFixed(2)}MB exceeds the 5MB limit.`,
-        }));
+      const thumbCheck = validateThumbnail(file);
+      if (!thumbCheck.ok) {
+        setFieldErrors((prev) => ({ ...prev, thumb: thumbCheck.error }));
         return;
       }
       setFieldErrors((prev) => {
@@ -92,7 +105,7 @@ export default function UploadForm() {
         return next;
       });
       setThumbFile(file);
-      setThumbPreview(URL.createObjectURL(file));
+      replaceThumbPreview(URL.createObjectURL(file));
       setShowCropper(true);
     }
   };
@@ -249,7 +262,7 @@ export default function UploadForm() {
       setDocFile(null);
       setDocFileName(null);
       setThumbFile(null);
-      setThumbPreview(null);
+      replaceThumbPreview(null);
       setShowCropper(false);
       setThumbCrop({ x: 0, y: 0 });
       setThumbZoom(1);
@@ -412,7 +425,7 @@ export default function UploadForm() {
                 type="button"
                 onClick={() => {
                   setThumbFile(null);
-                  setThumbPreview(null);
+                  replaceThumbPreview(null);
                   setShowCropper(false);
                 }}
                 className="rounded-md border border-gray-300 px-3 py-2 text-xs hover:bg-gray-100 text-red-600"

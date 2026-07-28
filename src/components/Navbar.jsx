@@ -7,6 +7,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { formatAddress } from "@/utils/formatAddress";
 import { WalletButton } from "./WalletBtn";
+import ConnectEVMWalletButton from "./web3/ConnectEVMWalletButton";
 import { useWallet } from "@/hooks/useWallet";
 import { useCart } from "@/hooks/useCart";
 import ThemeToggle from "./ThemeToggle";
@@ -183,8 +184,14 @@ export default function Navbar() {
 								</div>
 							</div>
 						</div>
+						<ConnectEVMWalletButton />
 					) : (
-						<WalletButton	/>
+						<div className="flex items-center gap-2">
+							<WalletButton	/>
+							<span className="hidden md:inline-flex">
+								<ConnectEVMWalletButton />
+							</span>
+						</div>
 					)}
 
 					{/* Mobile Menu Button */}
@@ -258,8 +265,9 @@ export default function Navbar() {
 									</div>
 								</div>
 							) : (
-								<div className="flex justify-center w-full">
+								<div className="flex flex-col items-center gap-3 w-full">
 									<WalletButton	/>
+									<ConnectEVMWalletButton />
 								</div>
 							)}
 						</div>

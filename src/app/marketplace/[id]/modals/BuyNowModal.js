@@ -16,16 +16,12 @@ import CheckoutReceiptModal from "../../../../../components/modals/CheckoutRecei
 import ConnectWalletModal from "./ConnectWalletModal";
 import TransactionStatusPanel from "@/components/transactions/TransactionStatusPanel";
 import { useCreatePurchase, useStartAccessRequest } from "@/hooks/api/usePurchases";
-import { ACCEPTED_ASSET, NATIVE_ASSET, getExplorerTxUrl } from "@/lib/config/chain";
+import { getExplorerTxUrl } from "@/lib/config/chain";
+import { getSupportedPaymentAssets } from "@/lib/config/assets";
 import { TransactionStatus } from "@/lib/transactions/transaction";
 import { useTransactionCenter } from "@/providers/TransactionProvider";
 
-const SUPPORTED_ASSETS = [
-  { code: NATIVE_ASSET, issuer: null, label: "Stellar Lumens (XLM)", requiresTrustline: false },
-  ...(ACCEPTED_ASSET && ACCEPTED_ASSET !== NATIVE_ASSET
-    ? [{ code: ACCEPTED_ASSET, issuer: null, label: `Stellar ${ACCEPTED_ASSET}`, requiresTrustline: true }]
-    : []),
-];
+const SUPPORTED_ASSETS = getSupportedPaymentAssets();
 
 function useQuote(materialId, asset, price) {
   const [loading, setLoading] = useState(false);

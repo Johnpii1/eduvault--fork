@@ -1,6 +1,9 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { FaFilter, FaSearch } from "react-icons/fa";
+
+const SEARCH_DEBOUNCE_MS = 300;
 
 const LEVEL_OPTIONS = [
   { id: "", label: "Any level" },
@@ -18,6 +21,29 @@ export default function MarketplaceFilters({
   onSearchChange, onSubjectChange, onCategoryChange, onLevelChange, onSortByChange,
   onPageReset,
 }) {
+  const [searchInput, setSearchInput] = useState(searchQuery);
+  const debounceRef = useRef(null);
+
+  // Keep the local input in sync when the query changes externally
+  // (URL restore, "clear filters", subject quick-search). Cancel any pending
+  // local-search debounce so the stale callback can't overwrite the new query.
+  useEffect(() => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = null;
+    setSearchInput(searchQuery);
+  }, [searchQuery]);
+
+  useEffect(() => () => clearTimeout(debounceRef.current), []);
+
+  const handleSearchInput = (value) => {
+    setSearchInput(value);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      onSearchChange(value);
+      onPageReset();
+    }, SEARCH_DEBOUNCE_MS);
+  };
+
   return (
     <>
       {/* Mobile Subjects + Categories */}
@@ -125,8 +151,8 @@ export default function MarketplaceFilters({
             type="text"
             placeholder="Search materials..."
             aria-label="Search materials"
-            value={searchQuery}
-            onChange={(e) => { onSearchChange(e.target.value); onPageReset(); }}
+            value={searchInput}
+            onChange={(e) => handleSearchInput(e.target.value)}
             className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-surface-muted border border-gray-200 dark:border-border-strong rounded-lg text-sm focus-visible:ring-2 focus-visible:ring-blue-500"
           />
         </div>
