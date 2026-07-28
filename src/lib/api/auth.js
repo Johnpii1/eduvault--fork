@@ -27,6 +27,17 @@ export async function getFullUserFromCookie(request) {
   }
 }
 
+/**
+ * Shared admin-route guard — resolves the session and requires `role === "admin"`.
+ * Returns the session payload on success, or `null` if the caller is missing
+ * or not an admin, so route handlers can respond with a consistent 401/403.
+ */
+export async function requireAdmin(request) {
+  const user = await getUserFromCookie(request);
+  if (!user || user.role !== "admin") return null;
+  return user;
+}
+
 export function sanitizeString(value, { maxLength = 5000 } = {}) {
   if (value === undefined || value === null) return "";
   return String(value).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim().slice(0, maxLength);

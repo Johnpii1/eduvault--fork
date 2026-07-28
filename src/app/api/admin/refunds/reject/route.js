@@ -5,17 +5,12 @@ import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { getDb } from '@/lib/mongodb';
 import { requireAdmin } from '@/lib/api/auth';
-import { approveRefund, processApprovedRefund } from '@/lib/refunds/refundWorkflow';
+import { rejectRefund } from '@/lib/refunds/refundWorkflow';
 
 /**
- * Authorize a requested refund claim (Issue #27). This only performs the
- * `requested -> approved` transition — it never talks to Horizon in-request,
- * so the response is fast and the admin action can't be half-done by a
- * request timeout. Submission happens through the same idempotent
- * `processApprovedRefund` the background worker uses; it's also given one
- * best-effort inline attempt here so approval doesn't have to wait for the
- * next worker poll, but a failure to submit immediately is not an error —
- * the worker will pick it up on its next pass regardless.
+ * Deny a requested (or permanently failed) refund claim (Issue #27).
+ * Terminal — a rejected claim never moves money and a new claim must be
+ * filed if the buyer disputes the decision.
  */
 export async function POST(request) {
   try {
@@ -30,15 +25,18 @@ export async function POST(request) {
     if (!refundId || !ObjectId.isValid(refundId)) {
       return NextResponse.json({ error: 'Missing or invalid refundId' }, { status: 400 });
     }
+    if (!reason || typeof reason !== 'string') {
+      return NextResponse.json({ error: 'A reason is required to reject a refund claim' }, { status: 400 });
+    }
 
     const db = await getDb();
     const actor = admin.walletAddress || admin.sub;
 
-    const result = await approveRefund({
+    const result = await rejectRefund({
       db,
       refundId: new ObjectId(refundId),
       actor,
-      reason: typeof reason === 'string' ? reason.slice(0, 500) : null,
+      reason: reason.slice(0, 500),
     });
 
     if (!result.success) {
@@ -46,13 +44,9 @@ export async function POST(request) {
       return NextResponse.json({ error: result.reason, refund: result.refund }, { status });
     }
 
-    processApprovedRefund({ db, refund: result.refund, actor }).catch(() => {
-      // Best-effort — the worker's own poll loop will retry this refund.
-    });
-
-    return NextResponse.json({ success: true, refund: result.refund }, { status: 202 });
+    return NextResponse.json({ success: true, refund: result.refund });
   } catch (error) {
-    console.error('POST /api/admin/refunds/approve error:', error);
+    console.error('POST /api/admin/refunds/reject error:', error);
     return NextResponse.json({ error: error.message || 'Server error' }, { status: 500 });
   }
 }

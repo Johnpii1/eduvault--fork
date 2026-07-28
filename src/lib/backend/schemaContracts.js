@@ -10,6 +10,8 @@ export const COLLECTIONS = {
   deadLetterEvents: "dead_letter_events",
   materialHistory: "material_history",
   savedMaterials: "saved_materials",
+  refunds: "refunds",
+  refundAuditLog: "refund_audit_log",
 };
 
 export const REQUIRED_INDEXES = {
@@ -71,6 +73,28 @@ export const REQUIRED_INDEXES = {
   saved_materials: [
     { keys: { walletAddress: 1, savedAt: -1 } },
     { keys: { walletAddress: 1, materialId: 1 }, options: { unique: true } },
+  ],
+  refunds: [
+    // At most one *live* (non-rejected) refund claim per purchase. A claim
+    // that reaches `settled` also blocks future claims via this index — the
+    // defined behavior for duplicate/partial claims is "one effective refund
+    // per purchase, ever". Rejected claims fall outside the filter so a buyer
+    // can be re-invited to file a new claim after a rejection.
+    {
+      keys: { purchaseId: 1 },
+      options: {
+        name: "refunds_one_live_claim_per_purchase_idx",
+        unique: true,
+        partialFilterExpression: { status: { $ne: "rejected" } },
+      },
+    },
+    { keys: { status: 1, updatedAt: 1 } },
+    { keys: { txHash: 1 }, options: { sparse: true } },
+    { keys: { idempotencyKey: 1 }, options: { unique: true, sparse: true } },
+  ],
+  refund_audit_log: [
+    { keys: { refundId: 1, createdAt: 1 } },
+    { keys: { correlationId: 1 } },
   ],
 };
 

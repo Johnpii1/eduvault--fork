@@ -18,6 +18,12 @@ import {
 } from "./workflowOrchestrator";
 import { getDb } from "@/lib/mongodb";
 import { COLLECTIONS } from "./schemaContracts";
+import {
+  getRefundsAwaitingSubmission,
+  getRefundsAwaitingReconciliation,
+  processApprovedRefund,
+  reconcileRefund,
+} from "@/lib/refunds/refundWorkflow";
 
 // Configuration
 const CONFIG = {
@@ -185,6 +191,34 @@ async function reconcileTransaction(workflow) {
 }
 
 /**
+ * Poll and advance the refund state machine — submits `approved` refunds and
+ * reconciles anything left `pending`/stuck mid-submission/settled-but-not-
+ * yet-converged. Runs every loop iteration regardless of material/purchase
+ * workflow volume, since refunds live in their own `refunds` collection.
+ */
+async function processRefundQueue() {
+  const db = await getDb();
+
+  const toSubmit = await getRefundsAwaitingSubmission(db, CONFIG.maxConcurrentJobs);
+  for (const refund of toSubmit) {
+    try {
+      await processApprovedRefund({ db, refund });
+    } catch (error) {
+      console.error(`[Worker] Error submitting refund ${refund._id}:`, error);
+    }
+  }
+
+  const toReconcile = await getRefundsAwaitingReconciliation(db, CONFIG.maxConcurrentJobs);
+  for (const refund of toReconcile) {
+    try {
+      await reconcileRefund({ db, refund });
+    } catch (error) {
+      console.error(`[Worker] Error reconciling refund ${refund._id}:`, error);
+    }
+  }
+}
+
+/**
  * Main worker loop
  */
 export async function runWorker() {
@@ -198,26 +232,25 @@ export async function runWorker() {
 
       if (workflows.length === 0) {
         console.log("[Worker] No workflows to process, waiting...");
-        await sleep(CONFIG.pollingInterval);
-        continue;
-      }
+      } else {
+        console.log(`[Worker] Processing ${workflows.length} workflow(s)...`);
 
-      console.log(`[Worker] Processing ${workflows.length} workflow(s)...`);
-
-      for (const workflow of workflows) {
-        try {
-          if (workflow.type === WORKFLOW_TYPES.MATERIAL_REGISTRATION) {
-            await processMaterialRegistration(workflow);
-          } else if (workflow.type === WORKFLOW_TYPES.PURCHASE) {
-            await processPurchase(workflow);
-          } else {
-            console.warn(`[Worker] Unknown workflow type: ${workflow.type}`);
+        for (const workflow of workflows) {
+          try {
+            if (workflow.type === WORKFLOW_TYPES.MATERIAL_REGISTRATION) {
+              await processMaterialRegistration(workflow);
+            } else if (workflow.type === WORKFLOW_TYPES.PURCHASE) {
+              await processPurchase(workflow);
+            } else {
+              console.warn(`[Worker] Unknown workflow type: ${workflow.type}`);
+            }
+          } catch (error) {
+            console.error(`[Worker] Error processing workflow ${workflow._id}:`, error);
           }
-        } catch (error) {
-          console.error(`[Worker] Error processing workflow ${workflow._id}:`, error);
         }
       }
 
+      await processRefundQueue();
       await sleep(CONFIG.pollingInterval);
     } catch (error) {
       console.error("[Worker] Error in worker loop:", error);

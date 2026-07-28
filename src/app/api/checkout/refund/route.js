@@ -1,98 +1,70 @@
-import { NextResponse } from 'next/server';
-import { verifyRefundLimit } from '@/lib/checkout/refundVerifier';
-import { refundPurchaseOnChain } from '@/lib/stellar/refundService';
-import { revokeEntitlement } from '@/lib/entitlement';
-import logger from '@/lib/logger';
-import { auditLog } from '@/lib/api/audit';
-import { getDb } from '@/lib/mongodb';
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
+import { NextResponse } from 'next/server';
+import { getDb } from '@/lib/mongodb';
+import { getUserFromCookie } from '@/lib/api/auth';
+import { requestRefund } from '@/lib/refunds/refundWorkflow';
+import logger from '@/lib/logger';
+
+const REASON_STATUS = {
+  purchase_not_found: 404,
+  not_purchase_owner: 403,
+  invalid_purchase_id: 400,
+};
+
+/**
+ * File a refund claim (Issue #27). This endpoint only accepts `purchaseId`,
+ * an optional `reason`, and an optional `requestedAmount` (for a partial
+ * refund) — destination, asset, network, and the actual refundable amount
+ * are always derived server-side from the purchase record, never trusted
+ * from the request body.
+ */
 export async function POST(req) {
   try {
-    const body = await req.json();
-    const { transactionId, refundAmount, purchaseId, buyerAddress, materialId } = body;
-
-    if (!transactionId || !refundAmount) {
-      return NextResponse.json({ error: 'Missing transactionId or refundAmount' }, { status: 400 });
+    const user = await getUserFromCookie(req);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Verify refund limits and eligibility
-    const verification = await verifyRefundLimit(transactionId, refundAmount);
+    const body = await req.json().catch(() => ({}));
+    const { purchaseId, reason, requestedAmount } = body;
 
-    if (!verification.valid) {
-      return NextResponse.json({ error: verification.reason }, { status: 400 });
+    if (!purchaseId) {
+      return NextResponse.json({ error: 'Missing purchaseId' }, { status: 400 });
     }
 
-    // If purchaseId is provided, check settlement state on-chain
-    if (purchaseId) {
-      // The on-chain contract enforces settlement state (must be Pending)
-      // We also check the local DB for a cached settlement state
-      const db = await getDb();
-      const purchase = await db.collection('purchases').findOne({ purchaseId: String(purchaseId) });
+    const isAdmin = user.role === 'admin';
+    const walletAddress = user.walletAddress || user.address || null;
 
-      if (purchase && purchase.settlementState && purchase.settlementState !== 'Pending') {
-        return NextResponse.json({
-          error: 'Refund not allowed',
-          detail: `Purchase is in ${purchase.settlementState} state. Only Pending purchases can be refunded.`,
-        }, { status: 400 });
-      }
+    if (!isAdmin && !walletAddress) {
+      return NextResponse.json({ error: 'Session has no wallet address' }, { status: 400 });
     }
 
-    // Execute on-chain refund via the PurchaseManager contract
-    if (purchaseId && buyerAddress) {
-      try {
-        const refundResult = await refundPurchaseOnChain(purchaseId, buyerAddress);
-        if (!refundResult.success) {
-          return NextResponse.json({ error: 'On-chain refund failed', detail: refundResult.error }, { status: 500 });
-        }
+    const db = await getDb();
+    const result = await requestRefund({
+      db,
+      purchaseId,
+      // Admins may file a claim on behalf of any buyer; a regular session is
+      // only ever allowed to claim its own purchase (enforced inside requestRefund).
+      buyerAddress: isAdmin ? null : walletAddress,
+      actor: walletAddress || user.sub,
+      reason: typeof reason === 'string' ? reason.slice(0, 500) : null,
+      requestedAmount: requestedAmount ?? null,
+    });
 
-        // Revoke entitlement in local cache
-        if (materialId && buyerAddress) {
-          await revokeEntitlement(materialId, buyerAddress);
-        }
-
-        // Update local purchase record with settlement state
-        const db = await getDb();
-        await db.collection('purchases').updateOne(
-          { purchaseId: String(purchaseId) },
-          {
-            $set: {
-              settlementState: 'Refunded',
-              refundedAt: new Date(),
-              refundTransactionHash: refundResult.hash,
-              updatedAt: new Date(),
-            },
-          }
-        );
-
-        auditLog({
-          event: 'refund_approved',
-          transactionId,
-          purchaseId,
-          refundAmount,
-          buyerAddress,
-          status: 'approved',
-          onChainHash: refundResult.hash,
-        });
-
-        return NextResponse.json({
-          message: 'Refund processed successfully',
-          data: {
-            ...verification.purchase,
-            settlementState: 'Refunded',
-            onChainHash: refundResult.hash,
-          },
-        });
-      } catch (chainError) {
-        logger.error({ err: chainError.message }, 'On-chain refund failed');
-        return NextResponse.json({ error: 'On-chain refund failed', detail: chainError.message }, { status: 500 });
-      }
+    if (!result.success) {
+      const status = REASON_STATUS[result.reason] || 400;
+      return NextResponse.json({ error: result.reason }, { status });
     }
 
-    // If no purchaseId, just validate (legacy path)
-    auditLog({ event: 'refund_approved', transactionId, refundAmount, status: 'approved' });
-
-    return NextResponse.json({ message: 'Refund validated successfully', data: verification.purchase });
-
+    return NextResponse.json(
+      {
+        message: result.alreadyExists ? 'Refund claim already exists for this purchase' : 'Refund requested',
+        refund: result.refund,
+      },
+      { status: result.alreadyExists ? 200 : 201 }
+    );
   } catch (error) {
     logger.error({ err: error.message }, 'Failed to process refund request');
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

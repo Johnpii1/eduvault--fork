@@ -295,6 +295,26 @@ const KNOWN_USDC_ISSUERS = {
 };
 
 /**
+ * Resolve the canonical issuer for a non-native asset code from configured/
+ * known issuers. Returns null for the native asset (XLM has no issuer).
+ * Centralizes the fallback chain used by trustline checks and refund payouts
+ * so neither path can accidentally mint against the wrong (or a made-up)
+ * issuer account.
+ *
+ * @param {string} assetCode
+ * @param {string} [issuerAddress] - explicit override, if the caller already knows it
+ * @returns {string|null}
+ */
+export function resolveAssetIssuer(assetCode, issuerAddress) {
+  if (assetCode === 'XLM') return null;
+  return (
+    issuerAddress ||
+    process.env.NEXT_PUBLIC_USDC_ISSUER ||
+    KNOWN_USDC_ISSUERS[isMainnet ? 'mainnet' : 'testnet']
+  );
+}
+
+/**
  * Check whether an account holds an active trustline for the specified asset.
  * Returns { hasTrustline, balance?, issuer? } on success.
  *
@@ -310,8 +330,7 @@ export async function checkBuyerTrustline(publicKey, assetCode, issuerAddress) {
     return { hasTrustline: true, balance: nativeBalance?.balance ?? '0', issuer: null };
   }
 
-  const issuer = issuerAddress || process.env.NEXT_PUBLIC_USDC_ISSUER
-    || KNOWN_USDC_ISSUERS[isMainnet ? 'mainnet' : 'testnet'];
+  const issuer = resolveAssetIssuer(assetCode, issuerAddress);
 
   const account = await loadAccount(publicKey);
   const trustline = account.balances.find(
