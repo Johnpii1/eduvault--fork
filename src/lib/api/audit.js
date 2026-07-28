@@ -16,6 +16,10 @@ const SAFE_FIELDS = new Set([
   "creatorId",
   "decision",
   "reviewerId",
+  "refundId",
+  "purchaseId",
+  "correlationId",
+  "policyVersion",
 ]);
 
 export function auditLog(fields) {

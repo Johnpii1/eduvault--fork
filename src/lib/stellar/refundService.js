@@ -1,247 +1,136 @@
-import { Keypair, TransactionBuilder, Networks, Asset, Operation } from '@stellar/stellar-sdk';
-import { loadAccount, submitTransaction } from './horizonClient';
+import { TransactionBuilder, Networks, Asset, Operation } from '@stellar/stellar-sdk';
+import { loadAccount, submitTransaction, resolveAssetIssuer } from './horizonClient';
 import { calculateDynamicFee } from './checkoutService';
-import { PURCHASE_MANAGER_CONTRACT_ID } from '@/lib/config/chain';
+import { signRefundTransaction, getRefundSignerPublicKey } from './refundSigner';
 
 const isMainnet = process.env.NEXT_PUBLIC_STELLAR_NETWORK === 'mainnet';
 const networkPassphrase = isMainnet ? Networks.PUBLIC : Networks.TESTNET;
 
 /**
- * Service to handle blockchain-level refund approvals.
- * Uses the failover Horizon client and surge-aware dynamic fee.
+ * Low-level Stellar execution for the refund workflow (Issue #27).
+ *
+ * This module only builds, signs, and submits a single payment transaction
+ * moving funds from the constrained signer (src/lib/stellar/refundSigner.js)
+ * to a destination — it holds no policy (amount derivation, idempotency,
+ * entitlement revocation). That lives in src/lib/refunds/refundWorkflow.js,
+ * which is the only caller these functions should have.
+ *
+ * Transaction-submission errors are classified into two buckets because they
+ * require different recovery:
+ *   - "rejected" (retryable: true)  — Horizon definitively rejected this exact
+ *     envelope (bad sequence, bad auth, insufficient balance/fee). It never
+ *     entered the ledger, so it is safe to rebuild a fresh envelope and retry.
+ *   - "ambiguous" (retryable: false) — a timeout/network/5xx error where we
+ *     never got a definitive answer. The transaction may still have been
+ *     broadcast and could land later. The caller MUST reconcile by the
+ *     precomputed transaction hash (getTransactionStatus) before doing
+ *     anything else — rebuilding a new envelope here risks a double payment.
  */
+
+const DEFINITIVE_REJECTION_CODES = new Set([
+  'tx_bad_seq',
+  'tx_bad_auth',
+  'tx_bad_auth_extra',
+  'tx_insufficient_balance',
+  'tx_insufficient_fee',
+  'tx_no_source_account',
+  'tx_malformed',
+]);
+
+function buildAsset(assetCode) {
+  if (assetCode === 'XLM') return Asset.native();
+  const issuer = resolveAssetIssuer(assetCode);
+  if (!issuer) {
+    throw new Error(`No known issuer configured for asset ${assetCode}`);
+  }
+  return new Asset(assetCode, issuer);
+}
 
 /**
- * Execute an on-chain refund via the PurchaseManager contract.
- * Calls refund_purchase (admin-only) which uses the PurchaseBuyer mapping.
+ * Read the refund signer's current balance for an asset, for the
+ * treasury-shortage check performed before submitting a refund.
  *
- * @param {string|number} purchaseId - The on-chain purchase ID
- * @param {string} buyerAddress - The buyer's Stellar public key
- * @returns {Promise<{success: boolean, hash?: string, error?: string}>}
+ * @param {string} assetCode
+ * @returns {Promise<number>}
  */
-export async function refundPurchaseOnChain(purchaseId, buyerAddress) {
-  if (!PURCHASE_MANAGER_CONTRACT_ID) {
-    return { success: false, error: 'Missing PURCHASE_MANAGER_CONTRACT_ID configuration.' };
-  }
+export async function getTreasuryBalance(assetCode) {
+  const account = await loadAccount(getRefundSignerPublicKey());
+  const balanceEntry =
+    assetCode === 'XLM'
+      ? account.balances.find((b) => b.asset_type === 'native')
+      : account.balances.find((b) => b.asset_type !== 'native' && b.asset_code === assetCode);
 
+  return balanceEntry ? parseFloat(balanceEntry.balance) : 0;
+}
+
+/**
+ * Build (but do not sign or submit) a refund payment transaction. Returns the
+ * transaction's hash up front so the caller can persist it durably *before*
+ * submission — the crash-safety anchor the refund workflow reconciles
+ * against if the process dies or Horizon times out mid-submission.
+ *
+ * @param {{ destination: string, amount: string|number, assetCode: string }} params
+ * @returns {Promise<{ transaction: import('@stellar/stellar-sdk').Transaction, hash: string, sequence: string }>}
+ */
+export async function buildRefundTransaction({ destination, amount, assetCode }) {
+  const signerAccount = await loadAccount(getRefundSignerPublicKey());
+  const { feeStroops } = await calculateDynamicFee();
+
+  const transaction = new TransactionBuilder(signerAccount, {
+    fee: String(feeStroops),
+    networkPassphrase,
+  })
+    .addOperation(
+      Operation.payment({
+        destination,
+        asset: buildAsset(assetCode),
+        amount: String(amount),
+      })
+    )
+    .setTimeout(30)
+    .build();
+
+  return {
+    transaction,
+    hash: transaction.hash().toString('hex'),
+    sequence: signerAccount.sequenceNumber(),
+  };
+}
+
+/**
+ * Sign and submit a previously-built refund transaction.
+ *
+ * @param {import('@stellar/stellar-sdk').Transaction} transaction
+ * @param {string|number} amount - re-validated against the signer's per-tx cap
+ * @returns {Promise<
+ *   | { outcome: 'confirmed', hash: string, ledger: number }
+ *   | { outcome: 'blocked', retryable: false, reason: string }
+ *   | { outcome: 'rejected', retryable: true, reason: string }
+ *   | { outcome: 'ambiguous', retryable: false, reason: string }
+ * >}
+ */
+export async function submitRefundTransaction(transaction, amount) {
   try {
-    const adminSecret = process.env.STELLAR_ADMIN_SECRET;
-    if (!adminSecret) {
-      return { success: false, error: 'Missing STELLAR_ADMIN_SECRET configuration.' };
-    }
-
-    const adminKeypair = Keypair.fromSecret(adminSecret);
-    const adminAccount = await loadAccount(adminKeypair.publicKey());
-
-    const { feeStroops } = await calculateDynamicFee();
-
-    // Build the Soroban contract invocation for refund_purchase
-    // This requires the Soroban SDK for contract invocation
-    // The invocation calls refund_purchase(admin, purchase_id) using PurchaseBuyer mapping
-    const tx = new TransactionBuilder(adminAccount, {
-      fee: String(feeStroops),
-      networkPassphrase,
-    })
-      .addOperation(
-        Operation.extendFootprintTtl({
-          extendTo: 100,
-        })
-      )
-      .setTimeout(30)
-      .build();
-
-    tx.sign(adminKeypair);
-
-    const transactionResult = await submitTransaction(tx);
-    return {
-      success: true,
-      hash: transactionResult.hash,
-    };
+    signRefundTransaction(transaction, amount);
   } catch (error) {
-    console.error('Error in refundPurchaseOnChain:', error);
-    return {
-      success: false,
-      error: error?.response?.data?.extras?.result_codes?.transaction || error.message,
-    };
-  }
-}
-
-/**
- * Check the settlement state of a purchase on-chain.
- * Calls get_settlement_state(purchase_id) on the PurchaseManager contract.
- *
- * @param {string|number} purchaseId - The on-chain purchase ID
- * @returns {Promise<{state: string|null, error?: string}>}
- */
-export async function checkSettlementState(purchaseId) {
-  if (!PURCHASE_MANAGER_CONTRACT_ID) {
-    return { state: null, error: 'Missing PURCHASE_MANAGER_CONTRACT_ID' };
+    // Never reached the network (signer disabled or over cap) — the built
+    // transaction and its sequence number are still unused, so this is safe
+    // to retry later once the operational block clears, with no rebuild.
+    return { outcome: 'blocked', retryable: false, reason: error.message };
   }
 
   try {
-    // Simulate a call to get_settlement_state via Soroban RPC
-    // In production, this would use the Soroban SDK to simulate a contract call
-    const body = {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'simulateTransaction',
-      params: {
-        transaction: buildSettlementStateXdr(purchaseId),
-      },
-    };
-
-    const STELLAR_RPC_URL = process.env.NEXT_PUBLIC_STELLAR_RPC_URL || process.env.STELLAR_RPC_URL;
-    if (!STELLAR_RPC_URL) {
-      return { state: null, error: 'Missing STELLAR_RPC_URL' };
-    }
-
-    const res = await fetch(STELLAR_RPC_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(8_000),
-    });
-
-    const payload = await res.json();
-    if (payload.error) {
-      return { state: null, error: payload.error.message };
-    }
-
-    const retval = payload.result?.results?.[0]?.xdr;
-    if (!retval) {
-      return { state: null, error: 'No result from simulation' };
-    }
-
-    return { state: decodeSettlementState(retval) };
+    const result = await submitTransaction(transaction);
+    return { outcome: 'confirmed', hash: result.hash, ledger: result.ledger };
   } catch (error) {
-    console.error('Error in checkSettlementState:', error);
-    return { state: null, error: error.message };
-  }
-}
-
-/**
- * Check if a purchase has been refunded on-chain.
- *
- * @param {string|number} purchaseId - The on-chain purchase ID
- * @returns {Promise<boolean>}
- */
-export async function isPurchaseRefunded(purchaseId) {
-  const { state, error } = await checkSettlementState(purchaseId);
-  if (error || !state) return false;
-  return state === 'Refunded';
-}
-
-/**
- * Check if a purchase can be withdrawn (settlement is Pending and lock period expired).
- *
- * @param {string|number} purchaseId - The on-chain purchase ID
- * @returns {Promise<boolean>}
- */
-export async function isPurchaseReleasable(purchaseId) {
-  if (!PURCHASE_MANAGER_CONTRACT_ID) return false;
-
-  try {
-    const body = {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'simulateTransaction',
-      params: {
-        transaction: buildIsEscrowReleasableXdr(purchaseId),
-      },
-    };
-
-    const STELLAR_RPC_URL = process.env.NEXT_PUBLIC_STELLAR_RPC_URL || process.env.STELLAR_RPC_URL;
-    if (!STELLAR_RPC_URL) return false;
-
-    const res = await fetch(STELLAR_RPC_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(8_000),
-    });
-
-    const payload = await res.json();
-    if (payload.error) return false;
-
-    const retval = payload.result?.results?.[0]?.xdr;
-    if (!retval) return false;
-
-    return decodeBoolean(retval);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Execute an on-chain refund via the PurchaseManager contract to a specific buyer.
- * Calls refund_purchase_to_buyer(admin, purchase_id, buyer).
- *
- * @param {string|number} purchaseId - The on-chain purchase ID
- * @param {string} buyerAddress - The buyer's Stellar public key
- * @returns {Promise<{success: boolean, hash?: string, error?: string}>}
- */
-export async function approveRefundOnChain(claimId, destinationAddress, amount, assetCode = 'USDC') {
-  try {
-    const adminSecret = process.env.STELLAR_ADMIN_SECRET;
-    if (!adminSecret) {
-      throw new Error("Missing STELLAR_ADMIN_SECRET configuration.");
+    const transactionCode = error?.response?.data?.extras?.result_codes?.transaction;
+    if (transactionCode && DEFINITIVE_REJECTION_CODES.has(transactionCode)) {
+      return { outcome: 'rejected', retryable: true, reason: transactionCode };
     }
-
-    const adminKeypair = Keypair.fromSecret(adminSecret);
-    const adminAccount = await loadAccount(adminKeypair.publicKey());
-
-    const { feeStroops } = await calculateDynamicFee();
-
-    const paymentOp = Operation.payment({
-      destination: destinationAddress,
-      asset: assetCode === 'XLM' ? Asset.native() : new Asset(assetCode, process.env.NEXT_PUBLIC_USDC_ISSUER || adminKeypair.publicKey()),
-      amount: String(amount),
-    });
-
-    let tx = new TransactionBuilder(adminAccount, {
-      fee: String(feeStroops),
-      networkPassphrase,
-    })
-      .addOperation(paymentOp)
-      .setTimeout(30)
-      .build();
-
-    tx.sign(adminKeypair);
-
-    const transactionResult = await submitTransaction(tx);
     return {
-      success: true,
-      hash: transactionResult.hash,
+      outcome: 'ambiguous',
+      retryable: false,
+      reason: error?.response?.data?.extras?.result_codes?.transaction || error.message,
     };
-  } catch (error) {
-    console.error("Error in approveRefundOnChain:", error);
-    throw new Error(`Refund failed: ${error?.response?.data?.extras?.result_codes?.transaction || error.message}`);
   }
-}
-
-// ============== XDR Build Helpers ==============
-
-function buildSettlementStateXdr(purchaseId) {
-  // Placeholder for actual Soroban XDR construction
-  // In production, use @stellar/stellar-sdk Soroban helpers
-  return '';
-}
-
-function buildIsEscrowReleasableXdr(purchaseId) {
-  // Placeholder for actual Soroban XDR construction
-  return '';
-}
-
-function decodeSettlementState(xdrBase64) {
-  // Placeholder for decoding settlement state from XDR
-  if (xdrBase64.includes('Pending')) return 'Pending';
-  if (xdrBase64.includes('Released')) return 'Released';
-  if (xdrBase64.includes('Disputed')) return 'Disputed';
-  if (xdrBase64.includes('Refunded')) return 'Refunded';
-  if (xdrBase64.includes('Expired')) return 'Expired';
-  return null;
-}
-
-function decodeBoolean(xdrBase64) {
-  return xdrBase64.includes('AAAE') || xdrBase64.includes('true');
 }

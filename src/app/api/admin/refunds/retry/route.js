@@ -5,17 +5,12 @@ import { NextResponse } from 'next/server';
 import { ObjectId } from 'mongodb';
 import { getDb } from '@/lib/mongodb';
 import { requireAdmin } from '@/lib/api/auth';
-import { approveRefund, processApprovedRefund } from '@/lib/refunds/refundWorkflow';
+import { retryFailedRefund, processApprovedRefund } from '@/lib/refunds/refundWorkflow';
 
 /**
- * Authorize a requested refund claim (Issue #27). This only performs the
- * `requested -> approved` transition — it never talks to Horizon in-request,
- * so the response is fast and the admin action can't be half-done by a
- * request timeout. Submission happens through the same idempotent
- * `processApprovedRefund` the background worker uses; it's also given one
- * best-effort inline attempt here so approval doesn't have to wait for the
- * next worker poll, but a failure to submit immediately is not an error —
- * the worker will pick it up on its next pass regardless.
+ * Explicit admin recovery action for a refund that hit a terminal `failed`
+ * state (e.g. treasury shortage after exhausting automatic retries) — an
+ * intentional human decision, not something the worker loops on forever.
  */
 export async function POST(request) {
   try {
@@ -34,7 +29,7 @@ export async function POST(request) {
     const db = await getDb();
     const actor = admin.walletAddress || admin.sub;
 
-    const result = await approveRefund({
+    const result = await retryFailedRefund({
       db,
       refundId: new ObjectId(refundId),
       actor,
@@ -42,8 +37,7 @@ export async function POST(request) {
     });
 
     if (!result.success) {
-      const status = result.reason === 'refund_not_found' ? 404 : 409;
-      return NextResponse.json({ error: result.reason, refund: result.refund }, { status });
+      return NextResponse.json({ error: result.reason }, { status: 409 });
     }
 
     processApprovedRefund({ db, refund: result.refund, actor }).catch(() => {
@@ -52,7 +46,7 @@ export async function POST(request) {
 
     return NextResponse.json({ success: true, refund: result.refund }, { status: 202 });
   } catch (error) {
-    console.error('POST /api/admin/refunds/approve error:', error);
+    console.error('POST /api/admin/refunds/retry error:', error);
     return NextResponse.json({ error: error.message || 'Server error' }, { status: 500 });
   }
 }
