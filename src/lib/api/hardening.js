@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auditLog } from "./audit";
-import { checkRateLimit } from "./rateLimit";
+import { slidingWindowRateLimit as checkRateLimit } from "../rateLimit";
 import { ValidationError } from "./validation";
 import { captureException } from "@/lib/sentry";
 

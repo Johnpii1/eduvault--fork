@@ -173,16 +173,6 @@ export async function POST(request) {
           }
           }
 
-
-
-
-
-
-
-
-
-
-
         // 6️⃣ Prepare the rest of the form data as JSON metadata
         const otherFields = {}
         for (const [key, value] of form.entries()) {
@@ -258,7 +248,6 @@ export async function POST(request) {
           auditLog({ event: 'upload_failed', route: 'upload', method: 'POST', status: 500, reason: `metadata_upload_failure: ${err.message}` })
           return NextResponse.json({ error: `Failed to publish metadata to storage: ${err.message}` }, { status: 500 })
         }
-
         auditLog({ event: 'upload_complete', route: 'upload', method: 'POST', status: 200 })
 
         // 8️⃣ Return the CID as storageKey plus URLs for backwards-compatibility

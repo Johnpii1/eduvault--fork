@@ -48,7 +48,8 @@ export default function UploadPage() {
 						<button className="border border-gray-300 px-4 py-2 rounded-md text-sm hover:bg-gray-100 transition">
 							Contact Us
 						</button>
-					</div>
+						</li>
+					</ol>
 				</aside>
 			</div>
 		</div>

@@ -15,7 +15,6 @@ import Navbar from "@/components/Navbar";
 import ResourceStatusBadge from "@/components/materials/ResourceStatusBadge";
 import RecommendedMaterials from "@/components/materials/RecommendedMaterials";
 import MaterialReviewPanel from "@/components/materials/MaterialReviewPanel";
-import ReportModal from "@/components/ReportModal";
 import { trackRecentlyViewed } from "@/hooks/useRecentlyViewed";
 import BuyNowModal from "./modals/BuyNowModal";
 import PreviewBlock from "./components/PreviewBlock";
