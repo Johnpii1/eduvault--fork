@@ -42,6 +42,7 @@ export async function POST(request) {
     }
 
     const newUser = {
+      uuid: crypto.randomUUID(),
       ...profile,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -155,6 +156,14 @@ export async function PATCH(request) {
 
         if (profileData.websiteUrl && typeof profileData.websiteUrl === 'string') {
           updateFields.websiteUrl = sanitizeString(profileData.websiteUrl, { maxLength: 256 });
+        }
+
+        if (profileData.coverPhoto && typeof profileData.coverPhoto === 'string') {
+          updateFields.coverPhoto = sanitizeString(profileData.coverPhoto, { maxLength: 500000 });
+        }
+
+        if (profileData.coverUrl && typeof profileData.coverUrl === 'string') {
+          updateFields.coverUrl = sanitizeString(profileData.coverUrl, { maxLength: 500000 });
         }
 
         if (
