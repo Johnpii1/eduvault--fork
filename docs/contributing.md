@@ -231,8 +231,11 @@ Run these commands from the `soroban/` directory before committing contract chan
 ```bash
 cargo fmt --all -- --check
 cargo fmt --all
+cargo clippy --workspace --all-targets --lib -- -D warnings
 cargo test --workspace --all-targets
 ```
+
+`cargo clippy` runs Rust lint checks. The `--lib` flag avoids unused-code warnings on test-only code in `cdylib` crates. If you prefer to lint everything including tests, omit `--lib`.
 
 For the frontend and backend:
 
@@ -261,6 +264,7 @@ For Soroban contract changes, also run:
 ```bash
 cd soroban
 cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --lib -- -D warnings
 cargo test --workspace --all-targets
 ```
 
@@ -275,6 +279,8 @@ rustc --version
 cargo --version
 rustup target list --installed
 soroban --version
+cd soroban && cargo fmt --all -- --check
+cd soroban && cargo clippy --workspace --all-targets --lib -- -D warnings
 cd soroban && cargo test --workspace --all-targets
 cd soroban && cargo build --target wasm32v1-none --release
 ```
@@ -284,32 +290,60 @@ Successful setup means:
 - Rust and Cargo return version numbers
 - `wasm32v1-none` appears in the installed target list
 - `soroban --version` returns a version
+- `cargo fmt` reports no formatting changes needed
+- `cargo clippy` produces no warnings
 - Contract tests pass
 - Contract WASM builds successfully
 
 ## Testnet Configuration
 
-If your work requires deploying or interacting with contracts on the Stellar testnet, set up a development identity:
+If your work requires deploying or interacting with contracts on the Stellar testnet, configure your CLI to use the testnet network and set up a development identity.
+
+### Add the testnet network
+
+```bash
+soroban network add \
+  --rpc-url https://soroban-testnet.stellar.org:443 \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  testnet
+```
+
+### Generate a development identity
 
 ```bash
 soroban config identity generate --global eduvault-deployer
 ```
 
-Fund the account using Friendbot:
+View the identity's public key:
 
 ```bash
-# Replace <YOUR_PUBLIC_KEY> with the address from the command above
+soroban config identity show --global eduvault-deployer
+```
+
+### Fund the account
+
+Use Friendbot to get testnet XLM:
+
+```bash
 curl "https://friendbot.stellar.org/?addr=<YOUR_PUBLIC_KEY>"
 ```
 
-Set the network environment:
+### Verify connectivity
+
+Build the contract first (from the repository root or the `soroban/` directory), then deploy:
 
 ```bash
-export SOROBAN_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
-export SOROBAN_RPC_HOST="https://soroban-testnet.stellar.org"
+cd soroban
+cargo build --target wasm32-unknown-unknown --release
+soroban contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/material_registry.wasm \
+  --source eduvault-deployer \
+  --network testnet
 ```
 
-After deployment, record the contract IDs and add them to your `.env.local`:
+### Record contract IDs
+
+After deployment, add the contract IDs to your `.env.local`:
 
 ```
 NEXT_PUBLIC_MATERIAL_REGISTRY_CONTRACT_ID=<DEPLOYED_CONTRACT_ID>
@@ -359,9 +393,24 @@ cargo install --locked soroban-cli --version 25.3.1
 
 ### Missing WebAssembly target
 
+The CI uses `wasm32v1-none`, while the project's `build.sh` script uses `wasm32-unknown-unknown`. Install both:
+
 ```bash
 rustup target add wasm32v1-none
 rustup target add wasm32-unknown-unknown
+```
+
+If `wasm32v1-none` is not available via `rustup target add`, ensure your Rust toolchain is up to date:
+
+```bash
+rustup update stable
+```
+
+The target requires Rust 1.80+ and a compatible nightly or recent stable toolchain. On Windows without WSL, you may need to use the **GNU toolchain** instead of the MSVC one if the target is not listed:
+
+```bash
+rustup toolchain install stable-x86_64-pc-windows-gnu
+rustup default stable-x86_64-pc-windows-gnu
 ```
 
 ### Linker or compiler errors
@@ -379,6 +428,16 @@ rustup show
 rustup default stable
 ```
 
+### Clippy produces unexpected warnings
+
+The `--lib` flag limits checks to library code and avoids unused-code warnings in test modules of `cdylib` crates. Run without `--lib` if you intend to lint test code too:
+
+```bash
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Some Soroban-generated code may trigger Clippy pedantic rules by design. The `-D warnings` flag ensures no warnings are silently introduced.
+
 ### Contract build fails
 
 - Confirm you are in the `soroban/` directory.
@@ -388,7 +447,21 @@ rustup default stable
 
 ### PowerShell differences on Windows
 
-If using native Windows PowerShell instead of WSL, note that shell scripts (`build.sh`, `run-tests.sh`) require a Unix-like shell. Use Git Bash or WSL to run them.
+If using native Windows PowerShell instead of WSL, note that shell scripts (`build.sh`, `run-tests.sh`) require a Unix-like shell. Use Git Bash or WSL to run them. The `cargo` and `rustup` commands work natively in PowerShell when using the MSVC toolchain, but the `wasm32v1-none` target may require the GNU toolchain on some Windows configurations.
+
+### soroban command refers to the Stellar CLI
+
+The `soroban` binary is installed by the `soroban-cli` crate (version 25.3.1). Newer unified Stellar CLI versions provide the same commands under the `stellar` binary. This repository uses the `soroban` binary. If you have installed `stellar-cli` instead, verify that the `soroban` subcommand is available:
+
+```bash
+stellar soroban --version
+```
+
+If you need to install the `soroban` binary directly:
+
+```bash
+cargo install --locked soroban-cli --version 25.3.1
+```
 
 ## Coding Guidelines
 
