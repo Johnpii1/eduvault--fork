@@ -94,12 +94,22 @@ export default function CreatorInventory() {
     setArchivedIds(getArchivedIds());
   }, []);
 
-  function handleArchive(id) {
-    setArchivedIds([...archiveResource(id)]);
+  async function handleArchive(id) {
+    try {
+      const updated = await archiveResource(id);
+      setArchivedIds([...updated]);
+    } catch (err) {
+      console.error("Archive failed:", err);
+    }
   }
 
-  function handleRestore(id) {
-    setArchivedIds([...restoreResource(id)]);
+  async function handleRestore(id) {
+    try {
+      const updated = await restoreResource(id);
+      setArchivedIds([...updated]);
+    } catch (err) {
+      console.error("Restore failed:", err);
+    }
   }
 
   // Read page from URL query; default to 1

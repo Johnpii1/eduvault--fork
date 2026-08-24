@@ -28,6 +28,16 @@
 // tests/backend/*.mjs suite under plain `node --test` (no bundler, so the
 // "@/..." alias doesn't resolve there).
 import {
+  Contract,
+  Address,
+  nativeToScVal,
+  xdr,
+  scValToNative,
+  TransactionBuilder,
+  Account,
+  Networks,
+} from '@stellar/stellar-sdk';
+import {
   PURCHASE_MANAGER_CONTRACT_ID,
   STELLAR_RPC_URL,
   NETWORK_PASSPHRASE,
@@ -84,11 +94,14 @@ async function checkChainEntitlement(materialId, buyerAddress) {
   if (!PURCHASE_MANAGER_CONTRACT_ID || !STELLAR_RPC_URL) return null;
 
   try {
+    const xdrTx = buildHasEntitlementXdr(materialId, buyerAddress);
+    if (!xdrTx) return null;
+
     const body = {
       jsonrpc: '2.0',
       id: 1,
       method: 'simulateTransaction',
-      params: { transaction: buildHasEntitlementXdr(materialId, buyerAddress) },
+      params: { transaction: xdrTx },
     };
 
     const res = await fetch(STELLAR_RPC_URL, {
@@ -120,11 +133,14 @@ async function checkChainSettlementState(purchaseId) {
   if (!PURCHASE_MANAGER_CONTRACT_ID || !STELLAR_RPC_URL || !purchaseId) return null;
 
   try {
+    const xdrTx = buildSettlementStateXdr(purchaseId);
+    if (!xdrTx) return null;
+
     const body = {
       jsonrpc: '2.0',
       id: 1,
       method: 'simulateTransaction',
-      params: { transaction: buildSettlementStateXdr(purchaseId) },
+      params: { transaction: xdrTx },
     };
 
     const res = await fetch(STELLAR_RPC_URL, {
@@ -146,25 +162,104 @@ async function checkChainSettlementState(purchaseId) {
   }
 }
 
-function buildHasEntitlementXdr(_materialId, _buyerAddress) {
-  return '';
+export function buildHasEntitlementXdr(materialId, buyerAddress) {
+  if (!PURCHASE_MANAGER_CONTRACT_ID || !materialId || !buyerAddress) return '';
+  try {
+    const contract = new Contract(PURCHASE_MANAGER_CONTRACT_ID);
+
+    let materialBytes;
+    if (typeof materialId === 'string') {
+      const clean = materialId.startsWith('0x') ? materialId.slice(2) : materialId;
+      if (/^[0-9a-fA-F]{64}$/.test(clean)) {
+        materialBytes = Buffer.from(clean, 'hex');
+      } else {
+        materialBytes = Buffer.alloc(32);
+        Buffer.from(materialId).copy(materialBytes);
+      }
+    } else if (Buffer.isBuffer(materialId) || materialId instanceof Uint8Array) {
+      materialBytes = Buffer.from(materialId);
+    } else {
+      materialBytes = Buffer.alloc(32);
+    }
+
+    const materialScVal = nativeToScVal(materialBytes, { type: 'bytes' });
+    const buyerScVal = new Address(buyerAddress).toScVal();
+    const op = contract.call('has_entitlement', materialScVal, buyerScVal);
+
+    const dummySource = new Account('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', '0');
+    const tx = new TransactionBuilder(dummySource, {
+      fee: '100',
+      networkPassphrase: NETWORK_PASSPHRASE || Networks.TESTNET,
+    })
+      .addOperation(op)
+      .setTimeout(30)
+      .build();
+
+    return tx.toXDR();
+  } catch (err) {
+    logger.warn({ event: 'build_has_entitlement_xdr_failed', err: err?.message }, 'Failed to build has_entitlement XDR');
+    return '';
+  }
 }
 
-function buildSettlementStateXdr(_purchaseId) {
-  return '';
+export function buildSettlementStateXdr(purchaseId) {
+  if (!PURCHASE_MANAGER_CONTRACT_ID || purchaseId === null || purchaseId === undefined) return '';
+  try {
+    const contract = new Contract(PURCHASE_MANAGER_CONTRACT_ID);
+    const purchaseIdBigInt = BigInt(purchaseId);
+    const purchaseIdScVal = nativeToScVal(purchaseIdBigInt, { type: 'u64' });
+    const op = contract.call('get_settlement_state', purchaseIdScVal);
+
+    const dummySource = new Account('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', '0');
+    const tx = new TransactionBuilder(dummySource, {
+      fee: '100',
+      networkPassphrase: NETWORK_PASSPHRASE || Networks.TESTNET,
+    })
+      .addOperation(op)
+      .setTimeout(30)
+      .build();
+
+    return tx.toXDR();
+  } catch (err) {
+    logger.warn({ event: 'build_settlement_state_xdr_failed', err: err?.message }, 'Failed to build settlement_state XDR');
+    return '';
+  }
 }
 
-function decodeBoolean(xdrBase64) {
-  return xdrBase64.includes('AAAE') || xdrBase64.includes('true');
+export function decodeBoolean(xdrBase64) {
+  if (!xdrBase64 || typeof xdrBase64 !== 'string') return null;
+  try {
+    const scVal = xdr.ScVal.fromXDR(xdrBase64, 'base64');
+    const native = scValToNative(scVal);
+    return typeof native === 'boolean' ? native : null;
+  } catch {
+    return null;
+  }
 }
 
-function decodeSettlementState(xdrBase64) {
-  if (xdrBase64.includes('Pending')) return 'Pending';
-  if (xdrBase64.includes('Released')) return 'Released';
-  if (xdrBase64.includes('Disputed')) return 'Disputed';
-  if (xdrBase64.includes('Refunded')) return 'Refunded';
-  if (xdrBase64.includes('Expired')) return 'Expired';
-  return null;
+export function decodeSettlementState(xdrBase64) {
+  if (!xdrBase64 || typeof xdrBase64 !== 'string') return null;
+  try {
+    const scVal = xdr.ScVal.fromXDR(xdrBase64, 'base64');
+    const native = scValToNative(scVal);
+    const validStates = ['Pending', 'Released', 'Disputed', 'Refunded', 'Expired'];
+
+    if (typeof native === 'string' && validStates.includes(native)) {
+      return native;
+    }
+    if (typeof native === 'number' && native >= 0 && native < validStates.length) {
+      return validStates[native];
+    }
+    if (native && typeof native === 'object') {
+      const tag = native.tag || native.name || (typeof native.state === 'string' ? native.state : null);
+      if (typeof tag === 'string' && validStates.includes(tag)) {
+        return tag;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Cache primitives ────────────────────────────────────────────────────────

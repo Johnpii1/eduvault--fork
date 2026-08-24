@@ -1,16 +1,17 @@
 /**
- * resourceArchive — client-side archive state for creator resources.
+ * resourceArchive — creator resource archive management.
  *
  * Archiving hides a resource from the creator's default inventory listing
- * without deleting it or its history; a restore action brings it back.
- * State is persisted per browser in localStorage until a backend archive
- * API exists (there is currently none), so the helpers are SSR-safe and
- * fail closed (nothing archived) when storage is unavailable.
+ * and public marketplace discovery without deleting it or its purchase history;
+ * a restore action brings it back.
+ *
+ * Persisted server-side via `/api/creator/materials/[id]/archive` with
+ * localStorage used strictly as an optimistic-UI client cache.
  */
 
 const STORAGE_KEY = "eduvault.archivedResources";
 
-function readStore() {
+function readLocalStore() {
   if (typeof window === "undefined" || !window.localStorage) return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -21,35 +22,97 @@ function readStore() {
   }
 }
 
-function writeStore(ids) {
+function writeLocalStore(ids) {
   if (typeof window === "undefined" || !window.localStorage) return;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
   } catch {
-    // Storage full or blocked — archive state simply won't persist.
+    // Storage full or blocked — optimistic cache won't persist
   }
 }
 
 export function getArchivedIds() {
-  return readStore();
+  return readLocalStore();
 }
 
 export function isArchived(id) {
-  return readStore().includes(id);
+  return readLocalStore().includes(id);
 }
 
-export function archiveResource(id) {
+/**
+ * Archive a resource via backend API and update local optimistic cache.
+ *
+ * @param {string} id - Material ID to archive
+ * @returns {Promise<string[]>} Updated list of archived IDs
+ */
+export async function archiveResource(id) {
   if (!id) return getArchivedIds();
-  const ids = readStore();
+
+  // Optimistic update
+  const ids = readLocalStore();
   if (!ids.includes(id)) {
     ids.push(id);
-    writeStore(ids);
+    writeLocalStore(ids);
   }
+
+  // Persist to backend API if in browser
+  if (typeof window !== "undefined" && typeof fetch === "function") {
+    try {
+      const res = await fetch(`/api/creator/materials/${encodeURIComponent(id)}/archive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: true }),
+      });
+      if (!res.ok) {
+        // Rollback optimistic update on error
+        const rolledBack = readLocalStore().filter((existing) => existing !== id);
+        writeLocalStore(rolledBack);
+        throw new Error("Failed to archive resource on backend");
+      }
+    } catch (err) {
+      console.error("archiveResource API call failed:", err.message);
+      throw err;
+    }
+  }
+
   return ids;
 }
 
-export function restoreResource(id) {
-  const ids = readStore().filter((existing) => existing !== id);
-  writeStore(ids);
+/**
+ * Restore (un-archive) a resource via backend API and update local optimistic cache.
+ *
+ * @param {string} id - Material ID to restore
+ * @returns {Promise<string[]>} Updated list of archived IDs
+ */
+export async function restoreResource(id) {
+  if (!id) return getArchivedIds();
+
+  // Optimistic update
+  const ids = readLocalStore().filter((existing) => existing !== id);
+  writeLocalStore(ids);
+
+  // Persist to backend API if in browser
+  if (typeof window !== "undefined" && typeof fetch === "function") {
+    try {
+      const res = await fetch(`/api/creator/materials/${encodeURIComponent(id)}/archive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: false }),
+      });
+      if (!res.ok) {
+        // Rollback optimistic update on error
+        const rolledBack = readLocalStore();
+        if (!rolledBack.includes(id)) {
+          rolledBack.push(id);
+          writeLocalStore(rolledBack);
+        }
+        throw new Error("Failed to restore resource on backend");
+      }
+    } catch (err) {
+      console.error("restoreResource API call failed:", err.message);
+      throw err;
+    }
+  }
+
   return ids;
 }

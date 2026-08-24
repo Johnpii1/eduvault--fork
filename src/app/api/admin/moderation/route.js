@@ -1,6 +1,10 @@
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 import { NextResponse } from 'next/server';
 import { withApiHardening } from '@/lib/api/hardening';
 import { getDb } from '@/lib/mongodb';
+import { requireAdmin } from '@/lib/api/auth';
 import { proposeSanction, approveSanction, fileAppeal, resolveAppeal } from '@/lib/moderation/cases';
 import { auditLog } from '@/lib/api/audit';
 
@@ -8,8 +12,12 @@ export async function GET(request) {
   return withApiHardening(
     request,
     { route: 'admin-moderation-list' },
-    async (req, res, session) => {
-      // In a real app, verify admin role here
+    async () => {
+      const admin = await requireAdmin(request);
+      if (!admin) {
+        return NextResponse.json({ error: 'Unauthorized. Admin access required.' }, { status: 403 });
+      }
+
       const db = await getDb();
       const cases = db.collection('moderation_cases');
       
@@ -28,12 +36,16 @@ export async function POST(request) {
   return withApiHardening(
     request,
     { route: 'admin-moderation-action' },
-    async (req, res, session) => {
-      // In a real app, verify admin role here
+    async () => {
+      const admin = await requireAdmin(request);
+      if (!admin) {
+        return NextResponse.json({ error: 'Unauthorized. Admin access required.' }, { status: 403 });
+      }
+
       try {
         const data = await request.json();
         const { action, caseId, sanction, decision, reason } = data;
-        const actorId = session?.user?.id || data.actorId || 'admin_user';
+        const actorId = admin.walletAddress || admin.sub || data.actorId;
 
         let result;
         switch (action) {
@@ -42,6 +54,7 @@ export async function POST(request) {
             result = await proposeSanction(caseId, sanction, actorId);
             break;
           case 'approve':
+            if (!approveSanction) throw new Error('Missing approve handler');
             result = await approveSanction(caseId, actorId);
             break;
           case 'file_appeal':
@@ -60,7 +73,7 @@ export async function POST(request) {
       } catch (err) {
         console.error('Moderation action error:', err);
         auditLog({ event: 'moderation_action_error', status: 500, reason: err.message });
-        return NextResponse.json({ error: err.message }, { status: 400 }); // Return 400 for logic errors
+        return NextResponse.json({ error: err.message }, { status: 400 });
       }
     }
   );
