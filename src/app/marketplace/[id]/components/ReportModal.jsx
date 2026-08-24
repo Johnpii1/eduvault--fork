@@ -90,7 +90,7 @@ function ReportModal({ isOpen, onClose, materialId, materialTitle }) {
             </button>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} noValidate className="space-y-4">
             <div className="flex items-center justify-between border-b border-gray-100 dark:border-border-subtle pb-3">
               <h3 className="text-lg font-bold text-gray-950 dark:text-foreground">Report Resource</h3>
               <button

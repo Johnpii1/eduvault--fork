@@ -9,7 +9,7 @@ function RevisionHistoryPanel({ history, currentVersion }) {
         <FaHistory className="text-blue-600" aria-hidden="true" />
         <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-foreground">Revision History</h2>
       </div>
-      {history.length === 0 ? (
+      {history.length === 0 && (!currentVersion || currentVersion === 1) ? (
         <div className="text-sm text-gray-500 dark:text-muted-foreground py-3">
           No past edits recorded. This is the initial version (v1).
         </div>

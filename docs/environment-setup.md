@@ -36,6 +36,7 @@ Required local values for the main app are:
 | `NEXT_PUBLIC_APP_URL` | Base URL for local links, usually `http://localhost:3000` |
 | `PINATA_JWT` | Pinata API token used for uploads |
 | `NEXT_PUBLIC_GATEWAY_URL` | Public gateway URL for reading pinned content |
+| `REDIS_URL` | Redis connection URL for distributed sliding-window rate limiting and catalog cache |
 
 Optional values include SMTP settings, WalletConnect project configuration, and planned Stellar/Soroban settings such as `NEXT_PUBLIC_STELLAR_NETWORK`, `NEXT_PUBLIC_STELLAR_RPC_URL`, `NEXT_PUBLIC_HORIZON_URL`, and `NEXT_PUBLIC_SOROBAN_CONTRACT_ID`.
 

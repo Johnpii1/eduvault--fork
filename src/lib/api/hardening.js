@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auditLog } from "./audit";
-import { slidingWindowRateLimit as checkRateLimit } from "../rateLimit";
+import { slidingWindowRateLimit } from "./rateLimit";
 import { ValidationError } from "./validation";
 import { captureException } from "@/lib/sentry";
 
@@ -12,7 +12,7 @@ function clientKey(request) {
 export async function withApiHardening(request, options, handler) {
   const route = options.route;
   const method = request.method || "GET";
-  const rateLimit = checkRateLimit(`${route}:${method}:${clientKey(request)}`, options.rateLimit);
+  const rateLimit = await slidingWindowRateLimit(`${route}:${method}:${clientKey(request)}`, options.rateLimit);
 
   if (!rateLimit.allowed) {
     auditLog({ event: "rate_limit_blocked", route, method, status: 429 });
