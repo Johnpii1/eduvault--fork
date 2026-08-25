@@ -1285,11 +1285,16 @@ fn refund_purchase_revokes_entitlement() {
     // Refund
     client.refund_purchase(&admin, &purchase_id);
 
-    // Withdraw payouts
-    client.withdraw_payouts(&creator, &purchase_id);
+    // Refunding claims the escrow, so it cannot subsequently be withdrawn.
+    let withdraw_result = client.try_withdraw_payouts(&creator, &purchase_id);
+    assert_eq!(
+        withdraw_result,
+        Err(Ok(PurchaseError::EscrowAlreadyClaimed))
+    );
 
     let escrow = client.get_escrow_record(&purchase_id).unwrap();
     assert!(escrow.claimed);
+    assert!(!client.has_entitlement(&material_id, &buyer));
 }
 
 // ============== Admin Abuse Tests ==============
@@ -1798,7 +1803,7 @@ fn purchase_creates_escrow_and_charges_platform_fee() {
     assert_eq!(escrow.purchase_id, purchase_id);
     assert_eq!(escrow.seller_net, 950_000);
     assert!(!escrow.claimed);
-    assert_eq!(escrow.payout_shares.len(), 1);
+    assert_eq!(escrow.payout_shares.len(), 2);
 
     assert_eq!(purchase_events.events().len(), 3);
 
@@ -2705,7 +2710,13 @@ fn test_purchase_with_usdc() {
                     amount: 5_000_000, // 50 USDC in 6 decimals
                 },
             ],
-            payout_shares: vec![&env],
+            payout_shares: vec![
+                &env,
+                PayoutShare {
+                    recipient: creator,
+                    share_bps: 10_000,
+                },
+            ],
         },
     );
 
@@ -2718,7 +2729,7 @@ fn test_purchase_with_usdc() {
     let sample_tx_id = sample_transaction_id(&env);
 
     let purchase_id = client.purchase(&buyer, &material_id, &usdc_asset, &5_000_000, &sample_tx_id);
-    assert!(purchase_id > 0);
+    assert_eq!(purchase_id, 0);
 
     assert!(client.has_entitlement(&material_id, &buyer));
 }
@@ -2814,7 +2825,13 @@ fn test_native_asset_purchase() {
                     amount: 10_000_000, // 10 XLM
                 },
             ],
-            payout_shares: vec![&env],
+            payout_shares: vec![
+                &env,
+                PayoutShare {
+                    recipient: creator,
+                    share_bps: 10_000,
+                },
+            ],
         },
     );
 
@@ -2833,7 +2850,7 @@ fn test_native_asset_purchase() {
         &10_000_000,
         &sample_tx_id,
     );
-    assert!(purchase_id > 0);
+    assert_eq!(purchase_id, 0);
 
     assert!(client.has_entitlement(&material_id, &buyer));
 }

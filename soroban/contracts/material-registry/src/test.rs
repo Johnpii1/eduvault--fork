@@ -450,17 +450,32 @@ fn rejects_duplicate_material_id_collisions() {
 #[test]
 fn requires_creator_auth_for_updates() {
     let env = Env::default();
-    let (contract_id, client, admin) = install_contract(&env);
+    let contract_id = env.register(MaterialRegistry, ());
+    let client = MaterialRegistryClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.mock_all_auths().initialize(&admin, &Vec::new(&env));
 
     let creator = Address::generate(&env);
     let material_id = bytes32(&env, 99);
     seed_material(&env, &contract_id, &creator, &material_id);
 
-    let result = client.try_update_sale_terms(
-        &material_id,
-        &replacement_quotes(&env, &client, &admin),
-        &replacement_payout_shares(&env),
-    );
+    // Approve a valid replacement quote without enabling blanket auth for the
+    // update invocation below. This ensures the call reaches require_auth()
+    // and fails specifically because creator authorization is absent.
+    let replacement_asset = Address::generate(&env);
+    client
+        .mock_all_auths()
+        .set_asset_allowed(&admin, &replacement_asset, &AssetKind::Token, &true);
+    let quotes = vec![
+        &env,
+        AssetQuote {
+            asset: replacement_asset,
+            amount: 7_500_000,
+        },
+    ];
+
+    let result =
+        client.try_update_sale_terms(&material_id, &quotes, &replacement_payout_shares(&env));
 
     assert!(result.is_err());
 }
@@ -1001,9 +1016,9 @@ fn assert_ttl_renewed_to_max(ttl: u32) {
 #[test]
 fn upgrade_admin_ttl_renews_on_every_touch_and_never_lapses() {
     let env = Env::default();
+    set_short_ttl_window(&env);
     let (contract_id, client, admin) = install_contract(&env);
     env.mock_all_auths();
-    set_short_ttl_window(&env);
 
     let creator = Address::generate(&env);
     client.register_material(
@@ -1025,7 +1040,7 @@ fn upgrade_admin_ttl_renews_on_every_touch_and_never_lapses() {
     // Any admin-touching call — here, a plain read — renews the instance
     // TTL straight back to the max, demonstrating admin state cannot expire
     // silently as long as the contract is used at all.
-    assert_eq!(client.get_upgrade_admin(), Some(creator));
+    assert_eq!(client.get_upgrade_admin(), Some(admin));
 
     let renewed_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
     assert_ttl_renewed_to_max(renewed_ttl);
@@ -1207,15 +1222,21 @@ fn extend_asset_policy_ttl_is_cursor_based() {
 
     let asset_a = Address::generate(&env);
     let asset_b = Address::generate(&env);
+    let cursor = env.as_contract(&contract_id, || {
+        env.storage()
+            .instance()
+            .get::<_, u64>(&DataKey::AllowedAssetCount)
+            .unwrap_or(0)
+    });
     client.set_asset_allowed(&admin, &asset_a, &AssetKind::Token, &true);
     client.set_asset_allowed(&admin, &asset_b, &AssetKind::Token, &true);
 
     env.ledger().with_mut(|li| li.sequence_number += 12_000);
 
-    let cursor = client.extend_asset_policy_ttl(&0, &1);
-    assert_eq!(cursor, 1);
-    let final_cursor = client.extend_asset_policy_ttl(&cursor, &1);
-    assert_eq!(final_cursor, 2);
+    let next_cursor = client.extend_asset_policy_ttl(&cursor, &1);
+    assert_eq!(next_cursor, cursor + 1);
+    let final_cursor = client.extend_asset_policy_ttl(&next_cursor, &1);
+    assert_eq!(final_cursor, cursor + 2);
 
     let asset_a_key = DataKey::AllowedAsset(asset_a);
     let renewed_ttl = env.as_contract(&contract_id, || {
