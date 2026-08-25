@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
 import { auditLog } from "./audit";
 import { slidingWindowRateLimit } from "./rateLimit";
+import { clientKey } from "./clientKey.mjs";
 import { ValidationError } from "./validation";
 import { captureException } from "@/lib/sentry";
 
-function clientKey(request) {
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  return forwardedFor?.split(",")[0]?.trim() || request.headers.get("x-real-ip") || "local";
-}
+export { clientKey } from "./clientKey.mjs";
 
 export async function withApiHardening(request, options, handler) {
   const route = options.route;
