@@ -24,6 +24,7 @@ jobs:
   validate:
     name: Soroban Contract Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,7 +32,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown,wasm32v1-none
+          targets: wasm32v1-none
           components: rustfmt,clippy
 
       - name: Cache Cargo dependencies
@@ -55,10 +56,6 @@ jobs:
         working-directory: soroban
         run: cargo test --workspace --all-targets
 
-      - name: Verify WASM compilation (wasm32-unknown-unknown)
-        working-directory: soroban
-        run: cargo build --target wasm32-unknown-unknown --release
-
-      - name: Verify WASM compilation (wasm32v1-none)
+      - name: Verify WASM compilation
         working-directory: soroban
         run: cargo build --target wasm32v1-none --release

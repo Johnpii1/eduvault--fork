@@ -36,10 +36,12 @@ Quick summary:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup target add wasm32v1-none
-cargo install --locked stellar-cli --version 25.2.0
+rustup target add wasm32v1-none wasm32-unknown-unknown
+cargo install --locked soroban-cli --version 25.3.1
 cd soroban && cargo test --workspace --all-targets
 ```
+
+The CI uses `wasm32v1-none` for builds, while the project `build.sh` script uses `wasm32-unknown-unknown`. Install both targets to work with either build method.
 
 ## Branching
 

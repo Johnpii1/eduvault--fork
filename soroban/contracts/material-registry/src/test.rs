@@ -52,7 +52,11 @@ fn default_quotes(env: &Env, client: &MaterialRegistryClient, admin: &Address) -
     ]
 }
 
-fn replacement_quotes(env: &Env, client: &MaterialRegistryClient, admin: &Address) -> Vec<AssetQuote> {
+fn replacement_quotes(
+    env: &Env,
+    client: &MaterialRegistryClient,
+    admin: &Address,
+) -> Vec<AssetQuote> {
     let usdc = Address::generate(env);
     client.set_asset_allowed(admin, &usdc, &AssetKind::Token, &true);
     vec![
@@ -178,7 +182,7 @@ fn registers_material_and_emits_registered_event() {
 #[test]
 fn rejects_duplicate_quote_assets() {
     let env = Env::default();
-    let (_contract_id, client, admin) = install_contract(&env);
+    let (_contract_id, client, _admin) = install_contract(&env);
     env.mock_all_auths();
 
     let creator = Address::generate(&env);
@@ -446,17 +450,32 @@ fn rejects_duplicate_material_id_collisions() {
 #[test]
 fn requires_creator_auth_for_updates() {
     let env = Env::default();
-    let (contract_id, client, admin) = install_contract(&env);
+    let contract_id = env.register(MaterialRegistry, ());
+    let client = MaterialRegistryClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.mock_all_auths().initialize(&admin, &Vec::new(&env));
 
     let creator = Address::generate(&env);
     let material_id = bytes32(&env, 99);
     seed_material(&env, &contract_id, &creator, &material_id);
 
-    let result = client.try_update_sale_terms(
-        &material_id,
-        &replacement_quotes(&env, &client, &admin),
-        &replacement_payout_shares(&env),
-    );
+    // Approve a valid replacement quote without enabling blanket auth for the
+    // update invocation below. This ensures the call reaches require_auth()
+    // and fails specifically because creator authorization is absent.
+    let replacement_asset = Address::generate(&env);
+    client
+        .mock_all_auths()
+        .set_asset_allowed(&admin, &replacement_asset, &AssetKind::Token, &true);
+    let quotes = vec![
+        &env,
+        AssetQuote {
+            asset: replacement_asset,
+            amount: 7_500_000,
+        },
+    ];
+
+    let result =
+        client.try_update_sale_terms(&material_id, &quotes, &replacement_payout_shares(&env));
 
     assert!(result.is_err());
 }
@@ -567,13 +586,18 @@ fn admin_transfer_requires_delay_before_acceptance_and_revokes_old_admin() {
     let too_short = client.try_initiate_admin_transfer(&admin, &next_admin, &60);
     assert_eq!(too_short, Err(Ok(RegistryError::InvalidTransferDelay)));
 
-    client.initiate_admin_transfer(&admin, &next_admin, &shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS);
+    client.initiate_admin_transfer(
+        &admin,
+        &next_admin,
+        &shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS,
+    );
     assert_eq!(
         client.get_pending_admin_transfer(),
         Some(PendingAdminTransfer {
             candidate: next_admin.clone(),
             initiated_at: env.ledger().timestamp(),
-            accept_after: env.ledger().timestamp() + shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS,
+            accept_after: env.ledger().timestamp()
+                + shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS,
         })
     );
 
@@ -608,7 +632,11 @@ fn admin_transfer_can_be_cancelled_before_acceptance() {
     let (_contract_id, client, admin) = install_contract(&env);
 
     let next_admin = Address::generate(&env);
-    client.initiate_admin_transfer(&admin, &next_admin, &shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS);
+    client.initiate_admin_transfer(
+        &admin,
+        &next_admin,
+        &shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS,
+    );
     assert!(client.get_pending_admin_transfer().is_some());
 
     client.cancel_admin_transfer(&admin);
@@ -631,7 +659,11 @@ fn only_nominated_candidate_can_accept_admin_transfer() {
 
     let candidate = Address::generate(&env);
     let impostor = Address::generate(&env);
-    client.initiate_admin_transfer(&admin, &candidate, &shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS);
+    client.initiate_admin_transfer(
+        &admin,
+        &candidate,
+        &shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS,
+    );
 
     env.ledger()
         .set_timestamp(env.ledger().timestamp() + shared_interface::MIN_ADMIN_TRANSFER_DELAY_SECS);
@@ -909,7 +941,7 @@ fn sale_term_update_write_cost_drops_at_least_20_percent_vs_legacy_layout() {
     );
 
     let next_quotes = replacement_quotes(&env, &client, &admin);
-    let tracked_asset = next_quotes.get_unchecked(0).asset.clone();
+    let _tracked_asset = next_quotes.get_unchecked(0).asset.clone();
     let next_payout_shares = replacement_payout_shares(&env);
     // `replacement_quotes` already approved `tracked_asset` on the allowlist.
 
@@ -984,9 +1016,9 @@ fn assert_ttl_renewed_to_max(ttl: u32) {
 #[test]
 fn upgrade_admin_ttl_renews_on_every_touch_and_never_lapses() {
     let env = Env::default();
+    set_short_ttl_window(&env);
     let (contract_id, client, admin) = install_contract(&env);
     env.mock_all_auths();
-    set_short_ttl_window(&env);
 
     let creator = Address::generate(&env);
     client.register_material(
@@ -1008,7 +1040,7 @@ fn upgrade_admin_ttl_renews_on_every_touch_and_never_lapses() {
     // Any admin-touching call — here, a plain read — renews the instance
     // TTL straight back to the max, demonstrating admin state cannot expire
     // silently as long as the contract is used at all.
-    assert_eq!(client.get_upgrade_admin(), Some(creator));
+    assert_eq!(client.get_upgrade_admin(), Some(admin));
 
     let renewed_ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
     assert_ttl_renewed_to_max(renewed_ttl);
@@ -1095,8 +1127,9 @@ fn allowed_asset_ttl_renews_on_write() {
 
     // Re-approving the same asset is a write, and renews its TTL.
     client.set_asset_allowed(&admin, &asset, &AssetKind::Token, &true);
-    let renewed_ttl =
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&asset_key));
+    let renewed_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&asset_key)
+    });
     assert_ttl_renewed_to_max(renewed_ttl);
 }
 
@@ -1189,15 +1222,21 @@ fn extend_asset_policy_ttl_is_cursor_based() {
 
     let asset_a = Address::generate(&env);
     let asset_b = Address::generate(&env);
+    let cursor = env.as_contract(&contract_id, || {
+        env.storage()
+            .instance()
+            .get::<_, u64>(&DataKey::AllowedAssetCount)
+            .unwrap_or(0)
+    });
     client.set_asset_allowed(&admin, &asset_a, &AssetKind::Token, &true);
     client.set_asset_allowed(&admin, &asset_b, &AssetKind::Token, &true);
 
     env.ledger().with_mut(|li| li.sequence_number += 12_000);
 
-    let cursor = client.extend_asset_policy_ttl(&0, &1);
-    assert_eq!(cursor, 1);
-    let final_cursor = client.extend_asset_policy_ttl(&cursor, &1);
-    assert_eq!(final_cursor, 2);
+    let next_cursor = client.extend_asset_policy_ttl(&cursor, &1);
+    assert_eq!(next_cursor, cursor + 1);
+    let final_cursor = client.extend_asset_policy_ttl(&next_cursor, &1);
+    assert_eq!(final_cursor, cursor + 2);
 
     let asset_a_key = DataKey::AllowedAsset(asset_a);
     let renewed_ttl = env.as_contract(&contract_id, || {
@@ -1211,8 +1250,7 @@ fn extend_asset_policy_ttl_is_cursor_based() {
 #[test]
 fn pause_active_and_toggle_helpers_track_material_status() {
     let env = Env::default();
-    let (_contract_id, client) = install_contract(&env);
-    env.mock_all_auths();
+    let (_contract_id, client, admin) = install_contract(&env);
 
     let creator = Address::generate(&env);
     let material_id = client.register_material(
@@ -1220,7 +1258,7 @@ fn pause_active_and_toggle_helpers_track_material_status() {
         &metadata_uri(&env),
         &bytes32(&env, 4),
         &bytes32(&env, 5),
-        &default_quotes(&env),
+        &default_quotes(&env, &client, &admin),
         &default_payout_shares(&env),
     );
 
@@ -1230,12 +1268,18 @@ fn pause_active_and_toggle_helpers_track_material_status() {
     // Pause via the boolean helper.
     client.set_material_paused(&creator, &material_id, &true);
     assert!(client.is_material_paused(&material_id));
-    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Paused);
+    assert_eq!(
+        client.get_material(&material_id).status,
+        MaterialStatus::Paused
+    );
 
     // Reactivate via set_material_active.
     client.set_material_active(&creator, &material_id, &true);
     assert!(!client.is_material_paused(&material_id));
-    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Active);
+    assert_eq!(
+        client.get_material(&material_id).status,
+        MaterialStatus::Active
+    );
 
     // Toggle flips the current pause state.
     client.toggle_material_paused(&creator, &material_id);
@@ -1247,8 +1291,7 @@ fn pause_active_and_toggle_helpers_track_material_status() {
 #[test]
 fn deactivating_material_archives_then_restores_status() {
     let env = Env::default();
-    let (_contract_id, client) = install_contract(&env);
-    env.mock_all_auths();
+    let (_contract_id, client, admin) = install_contract(&env);
 
     let creator = Address::generate(&env);
     let material_id = client.register_material(
@@ -1256,23 +1299,29 @@ fn deactivating_material_archives_then_restores_status() {
         &metadata_uri(&env),
         &bytes32(&env, 4),
         &bytes32(&env, 5),
-        &default_quotes(&env),
+        &default_quotes(&env, &client, &admin),
         &default_payout_shares(&env),
     );
 
     // Deactivating archives the material.
     client.set_material_deactivated(&creator, &material_id, &true);
-    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Archived);
+    assert_eq!(
+        client.get_material(&material_id).status,
+        MaterialStatus::Archived
+    );
 
     // Reactivating an unpaused material returns it to Active.
     client.set_material_deactivated(&creator, &material_id, &false);
-    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Active);
+    assert_eq!(
+        client.get_material(&material_id).status,
+        MaterialStatus::Active
+    );
 }
 
 #[test]
 fn get_material_and_get_quote_reject_unknown_material() {
     let env = Env::default();
-    let (_contract_id, client) = install_contract(&env);
+    let (_contract_id, client, _admin) = install_contract(&env);
 
     let unknown_id = bytes32(&env, 200);
     let asset = Address::generate(&env);
@@ -1290,8 +1339,7 @@ fn get_material_and_get_quote_reject_unknown_material() {
 #[test]
 fn non_creator_cannot_change_material_status() {
     let env = Env::default();
-    let (_contract_id, client) = install_contract(&env);
-    env.mock_all_auths();
+    let (_contract_id, client, admin) = install_contract(&env);
 
     let creator = Address::generate(&env);
     let material_id = client.register_material(
@@ -1299,7 +1347,7 @@ fn non_creator_cannot_change_material_status() {
         &metadata_uri(&env),
         &bytes32(&env, 4),
         &bytes32(&env, 5),
-        &default_quotes(&env),
+        &default_quotes(&env, &client, &admin),
         &default_payout_shares(&env),
     );
 
@@ -1308,5 +1356,8 @@ fn non_creator_cannot_change_material_status() {
     let stranger = Address::generate(&env);
     let result = client.try_set_material_status(&stranger, &material_id, &MaterialStatus::Paused);
     assert_eq!(result, Err(Ok(RegistryError::NotAuthorized)));
-    assert_eq!(client.get_material(&material_id).status, MaterialStatus::Active);
+    assert_eq!(
+        client.get_material(&material_id).status,
+        MaterialStatus::Active
+    );
 }

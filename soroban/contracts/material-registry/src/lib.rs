@@ -682,7 +682,9 @@ impl MaterialRegistry {
         env.storage()
             .instance()
             .set(&DataKey::UpgradeAdmin, &candidate);
-        env.storage().instance().remove(&DataKey::PendingAdminTransfer);
+        env.storage()
+            .instance()
+            .remove(&DataKey::PendingAdminTransfer);
         extend_instance_ttl(&env);
         Ok(())
     }
@@ -697,17 +699,16 @@ impl MaterialRegistry {
         if !env.storage().instance().has(&DataKey::PendingAdminTransfer) {
             return Err(RegistryError::NoPendingAdminTransfer);
         }
-        env.storage().instance().remove(&DataKey::PendingAdminTransfer);
+        env.storage()
+            .instance()
+            .remove(&DataKey::PendingAdminTransfer);
         extend_instance_ttl(&env);
         Ok(())
     }
 
     /// Return the pending admin transfer, if one is in progress.
     pub fn get_pending_admin_transfer(env: Env) -> Option<PendingAdminTransfer> {
-        let pending = env
-            .storage()
-            .instance()
-            .get(&DataKey::PendingAdminTransfer);
+        let pending = env.storage().instance().get(&DataKey::PendingAdminTransfer);
         extend_instance_ttl(&env);
         pending
     }
