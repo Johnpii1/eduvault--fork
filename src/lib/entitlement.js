@@ -70,6 +70,9 @@ const REVOKING_SETTLEMENT_STATES = new Set(['Refunded', 'Disputed', 'Expired']);
 // Bounded cache window — nothing is trusted past this without re-derivation.
 export const ENTITLEMENT_CACHE_TTL_MS = Number(process.env.ENTITLEMENT_CACHE_TTL_MS || 30_000);
 
+// Cache versioning — increment on canonical chain events to invalidate stale entries.
+export const CACHE_VERSION = Number(process.env.CACHE_VERSION || 1);
+
 const CURRENT_NETWORK = NETWORK_PASSPHRASE;
 const CURRENT_CONTRACT = PURCHASE_MANAGER_CONTRACT_ID || null;
 
@@ -271,6 +274,7 @@ async function getCacheEntry(db, materialId, buyerAddress) {
 async function writeCacheEntry(db, { materialId, buyerAddress, state, source, purchaseId, settlementState, network, contractId, contentHash }) {
   const timestamp = now();
   const active = ALLOWING_STATES.has(state);
+  const version = CACHE_VERSION;
 
   await db.collection('entitlement_cache').updateOne(
     { materialId, buyerAddress },
@@ -288,6 +292,9 @@ async function writeCacheEntry(db, { materialId, buyerAddress, state, source, pu
         network: network ?? CURRENT_NETWORK ?? null,
         contractId: contractId ?? CURRENT_CONTRACT,
         contentHash: contentHash ?? null,
+        // Cache version — increment on canonical chain events to invalidate
+        // stale entries across reorgs and network switches.
+        cacheVersion: version,
         checkedAt: timestamp,
         updatedAt: timestamp,
       },
@@ -302,7 +309,13 @@ async function writeCacheEntry(db, { materialId, buyerAddress, state, source, pu
 function isFresh(entry) {
   if (!entry?.checkedAt) return false;
   const checkedAt = entry.checkedAt instanceof Date ? entry.checkedAt : new Date(entry.checkedAt);
-  return Date.now() - checkedAt.getTime() < ENTITLEMENT_CACHE_TTL_MS;
+  const entryVersion = entry.cacheVersion ?? 0;
+  const currentVersion = CACHE_VERSION;
+  // Entry is fresh only if within TTL AND version matches current cache version
+  // (version increments on canonical chain events, so stale versions are rejected).
+  const isWithinTtl = Date.now() - checkedAt.getTime() < ENTITLEMENT_CACHE_TTL_MS;
+  const versionMatches = entryVersion >= currentVersion;
+  return isWithinTtl && versionMatches;
 }
 
 function bindingMatches(entry, { contentHash }) {
@@ -516,12 +529,20 @@ export async function resolveEntitlement({ db, materialId, buyerAddress, purchas
     let settlementState = purchase.settlementState || null;
     const chainState = await checkChainSettlementState(effectivePurchaseId);
 
+    // Deny-safe reorg handling:
+    // - If chain state is available and differs from purchase state, log disagreement
+    // - If chain state is unavailable (e.g. RPC outage), do NOT upgrade from local
+    //   purchase state — keep the locally-recorded settlementState as-is.
+    // - This prevents cache outages or reorgs from unexpectedly granting access.
     if (chainState && chainState !== settlementState) {
       logDisagreement(
         { materialId, buyerAddress: normalised },
         { purchasesDbSettlementState: settlementState, chainSettlementState: chainState }
       );
     }
+    // Only upgrade settlementState from chain if chain state is available and
+    // matches or supersedes the purchase state. If chain is unreachable, keep the
+    // local purchase state to avoid granting access during reorg/outage.
     if (chainState) settlementState = chainState;
 
     if (settlementState && REVOKING_SETTLEMENT_STATES.has(settlementState)) {
