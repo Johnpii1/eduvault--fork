@@ -21,6 +21,9 @@
  *     take effect without waiting for the TTL.
  *   - Fails closed: RPC, cache, or database errors produce UNAVAILABLE
  *     (deny), never a default allow.
+ *
+ * For full design documentation, state descriptions, decision diagrams, and
+ * troubleshooting workflows, see docs/entitlement-authorization.md.
  */
 
 // Relative imports throughout this file, deliberately — src/lib/purchases/access.js
