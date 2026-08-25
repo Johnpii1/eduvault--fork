@@ -11,6 +11,13 @@ This guide describes the local setup required to run EduVault and test the main 
 - Pinata credentials for IPFS uploads
 - Wallet tooling for testing wallet-connected flows
 
+For contributors working on Soroban smart contracts in `soroban/`:
+- Rust and Cargo (stable channel via `rustup`)
+- WebAssembly target `wasm32v1-none`
+- Stellar CLI (`cargo install --locked stellar-cli --version 25.2.0`)
+- OS build tools (`build-essential` on Linux, Xcode Command Line Tools on macOS; Windows contributors using WSL 2 must install `build-essential` inside their WSL environment)
+- See the [Contribution Guide](contributing.md#rust-and-soroban-prerequisites) for full setup instructions.
+
 ## Install Dependencies
 
 ```bash

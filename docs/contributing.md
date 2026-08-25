@@ -100,7 +100,7 @@ Confirm the active toolchain is `stable` with a recent date.
 
 ## WebAssembly Compilation Target
 
-Soroban contracts compile to WebAssembly. The CI pipeline validates against `wasm32v1-none`. Add this target:
+Soroban contracts compile to WebAssembly. The compilation pipeline targets `wasm32v1-none`, which restricts features to the WebAssembly 1.0 subset supported by the Soroban runtime. Add this target:
 
 ```bash
 rustup target add wasm32v1-none
@@ -112,24 +112,20 @@ Verify the target is installed:
 rustup target list --installed
 ```
 
-You should see `wasm32v1-none` in the list. The `soroban/build.sh` script uses `wasm32-unknown-unknown`; both targets produce valid WASM for Soroban. If you use the build script, also add `wasm32-unknown-unknown`:
-
-```bash
-rustup target add wasm32-unknown-unknown
-```
+You should see `wasm32v1-none` in the list.
 
 ## Stellar CLI Installation
 
-The Stellar CLI provides the `soroban` command used for contract deployment and testnet interaction. Install the version aligned with the workspace's `soroban-sdk` dependency (version 25.3.1):
+The Stellar CLI provides the `stellar` (and aliased `soroban`) command used for contract deployment and testnet interaction. Install the official `stellar-cli` package:
 
 ```bash
-cargo install --locked soroban-cli --version 25.3.1
+cargo install --locked stellar-cli --version 25.2.0
 ```
 
 Verify:
 
 ```bash
-soroban --version
+stellar --version
 ```
 
 The CLI binary is placed in `$HOME/.cargo/bin`. See the next section if the command is not found.
@@ -342,26 +338,25 @@ Open a new terminal or source the environment:
 source "$HOME/.cargo/env"
 ```
 
-### soroban command not found
+### stellar or soroban command not found
 
 Confirm `$HOME/.cargo/bin` is in your `PATH` and that the installation completed:
 
 ```bash
-which soroban
-soroban --version
+which stellar
+stellar --version
 ```
 
 If not installed, run:
 
 ```bash
-cargo install --locked soroban-cli --version 25.3.1
+cargo install --locked stellar-cli --version 25.2.0
 ```
 
 ### Missing WebAssembly target
 
 ```bash
 rustup target add wasm32v1-none
-rustup target add wasm32-unknown-unknown
 ```
 
 ### Linker or compiler errors

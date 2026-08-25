@@ -37,7 +37,7 @@ Quick summary:
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup target add wasm32v1-none
-cargo install --locked soroban-cli --version 25.3.1
+cargo install --locked stellar-cli --version 25.2.0
 cd soroban && cargo test --workspace --all-targets
 ```
 
