@@ -290,3 +290,4 @@ The chain should secure settlement and rights. The web application should optimi
 | [`creator-publishing-guide.md`](creator-publishing-guide.md) | Step-by-step tutorial for uploading and listing materials |
 | [`soroban-upgrade-pattern.md`](soroban-upgrade-pattern.md) | Contract upgrade strategy and migration rules |
 | [`purchase-flow-architecture.md`](purchase-flow-architecture.md) | Hybrid on-chain/off-chain purchase boundaries |
+| [`entitlement-authorization.md`](entitlement-authorization.md) | Entitlement authorization decision flow, states, cache guarantees, and support playbook |

@@ -17,3 +17,5 @@ access:
 Payment and entitlement behavior is covered in
 `soroban/contracts/purchase-manager/src/test.rs`, including successful
 purchases, duplicate prevention, entitlement reads, refunds, and TTL renewal.
+
+For detailed documentation on the backend authorization policy, the five entitlement states, caching invariants, and troubleshooting workflows, see [`docs/entitlement-authorization.md`](entitlement-authorization.md).
