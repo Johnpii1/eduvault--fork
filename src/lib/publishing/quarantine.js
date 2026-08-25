@@ -33,6 +33,41 @@ const DEFAULT_CONFIG = {
   maxRetries: 3,
 };
 
+function buildIpfsGatewayUrl(contentHash) {
+  const gateway = process.env.NEXT_PUBLIC_GATEWAY_URL || process.env.IPFS_GATEWAY_URL || 'https://gateway.pinata.cloud';
+  return `${gateway.replace(/\/$/, '')}/ipfs/${encodeURIComponent(contentHash)}`;
+}
+
+export function createIpfsFetchScanner({ fetchImpl = globalThis.fetch } = {}) {
+  return {
+    name: 'ipfs-fetch-scanner',
+    async scan({ contentHash }) {
+      if (typeof fetchImpl !== 'function') {
+        throw new Error('No fetch implementation available for IPFS scan');
+      }
+
+      const response = await fetchImpl(buildIpfsGatewayUrl(contentHash), {
+        signal: AbortSignal.timeout(DEFAULT_CONFIG.scanTimeoutMs),
+      });
+      if (!response.ok) {
+        throw new Error(`Unable to fetch quarantined content: ${response.status}`);
+      }
+
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const sample = new TextDecoder().decode(bytes.slice(0, Math.min(bytes.length, 4096)));
+      const infected = sample.includes('EICAR-STANDARD-ANTIVIRUS-TEST-FILE');
+
+      return infected
+        ? {
+            infected: true,
+            reason: QUARANTINE_REASONS.MALWARE_SIGNATURE,
+            threats: ['EICAR-Test-File'],
+          }
+        : { infected: false };
+    },
+  };
+}
+
 /**
  * Create a quarantine record for an uploaded file/content.
  */
@@ -125,7 +160,7 @@ export async function runScanner({
   fileName,
   mimeType,
   sizeBytes,
-  scannerImpl,
+  scannerImpl = createIpfsFetchScanner(),
   timeoutMs = DEFAULT_CONFIG.scanTimeoutMs,
 }) {
   const quarantine = await db.collection('quarantine').findOne({ contentHash });
@@ -179,6 +214,15 @@ export async function runScanner({
         scanner: scanOutput.scannerName || scannerImpl.name,
         scanResult: { verdict: 'clean', engineVersion: scanOutput.engineVersion || null },
       });
+    } catch (error) {
+      return finalizeQuarantine({
+        db,
+        contentHash,
+        state: QUARANTINE_STATES.SCANNER_UNAVAILABLE,
+        reason: QUARANTINE_REASONS.SCANNER_OUTAGE,
+        scanner: scannerImpl.name || 'default',
+        scanResult: { verdict: 'error', message: error?.message || String(error) },
+      });
     } finally {
       scanCompleted = true;
     }
@@ -230,7 +274,7 @@ export async function verifyMaterialNotQuarantined(db, contentHash) {
 /**
  * Replay quarantined items after scanner outage recovery.
  */
-export async function replayQuarantine(db, limit = 100) {
+export async function replayQuarantine(db, limit = 100, { scannerImpl, timeoutMs } = {}) {
   const collection = db.collection('quarantine');
   const cursor = collection
     .find({
@@ -250,6 +294,15 @@ export async function replayQuarantine(db, limit = 100) {
         },
       }
     );
+    await runScanner({
+      db,
+      contentHash: doc.contentHash,
+      fileName: doc.fileName,
+      mimeType: doc.mimeType,
+      sizeBytes: doc.sizeBytes,
+      scannerImpl,
+      timeoutMs,
+    });
     results.push(doc.contentHash);
   }
 

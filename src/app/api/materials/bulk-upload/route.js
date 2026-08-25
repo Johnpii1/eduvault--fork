@@ -5,6 +5,9 @@ import { auditLog } from '@/lib/api/audit'
 import { withApiHardening } from '@/lib/api/hardening'
 import { validateUploadedFile } from '@/lib/ipfs/uploadValidator'
 import { pinata } from '@/lib/pinata'
+import { getDb } from '@/lib/mongodb'
+import { enqueueSideEffect } from '@/lib/backend/outbox'
+import { createQuarantineRecord } from '@/lib/publishing/quarantine'
 
 const MAX_FILES_PER_BATCH = 10
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB per file
@@ -131,6 +134,33 @@ export async function POST(request) {
         const uploadPromises = files.map(async (file, index) => {
           const uploadedFile = await pinata.upload.public.file(file)
           const gatewayUrl = await pinata.gateways.public.convert(uploadedFile.cid)
+          const uploaderAddress = request.headers.get('x-wallet-address') || 'anonymous'
+          const db = await getDb()
+          const quarantine = await createQuarantineRecord({
+            db,
+            contentHash: uploadedFile.cid,
+            fileName: file.name,
+            mimeType: file.type,
+            sizeBytes: file.size,
+            uploaderAddress,
+            materialId: null,
+          })
+
+          await enqueueSideEffect({
+            sourceAggregate: 'quarantine',
+            sourceId: quarantine.contentHash,
+            intent: {
+              type: 'indexer',
+              channel: 'scan_content',
+              payload: {
+                contentHash: quarantine.contentHash,
+                fileName: quarantine.fileName,
+                mimeType: quarantine.mimeType,
+                sizeBytes: quarantine.sizeBytes,
+                action: 'scan',
+              },
+            },
+          })
 
           return {
             index,
@@ -138,6 +168,8 @@ export async function POST(request) {
             fileSize: file.size,
             mimeType: file.type,
             cid: uploadedFile.cid,
+            contentHash: quarantine.contentHash,
+            quarantineState: quarantine.state,
             url: gatewayUrl,
           }
         })

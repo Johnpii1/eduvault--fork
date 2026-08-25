@@ -1,3 +1,4 @@
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { getDb } from '@/lib/mongodb';
 import { logger } from '@/lib/logger';
 
@@ -48,19 +49,63 @@ export async function getDailyStats(db) {
   };
 }
 
-export async function sendWebhookWithRetry(url, payload, retries = 3) {
+export function generateWebhookSigningSecret() {
+  return randomBytes(32).toString('hex');
+}
+
+export function createWebhookSignatureHeader(body, secret, timestamp = Math.floor(Date.now() / 1000)) {
+  if (!secret) return null;
+  const signedPayload = `${timestamp}.${body}`;
+  const signature = createHmac('sha256', secret).update(signedPayload).digest('hex');
+  return `t=${timestamp},v1=${signature}`;
+}
+
+export function verifyWebhookSignature(body, signatureHeader, secret, { toleranceSeconds = 300, now = Math.floor(Date.now() / 1000) } = {}) {
+  if (!body || !signatureHeader || !secret) return false;
+  const parts = Object.fromEntries(signatureHeader.split(',').map((part) => part.split('=')));
+  const timestamp = Number(parts.t);
+  const signature = parts.v1;
+  if (!Number.isFinite(timestamp) || !signature) return false;
+  if (Math.abs(now - timestamp) > toleranceSeconds) return false;
+
+  const expected = createWebhookSignatureHeader(body, secret, timestamp).split('v1=')[1];
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  const receivedBuffer = Buffer.from(signature, 'hex');
+  return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
+async function ensureWebhookSigningSecret(db, creator) {
+  if (creator.webhookSigningSecret) return creator.webhookSigningSecret;
+  const secret = generateWebhookSigningSecret();
+  await db.collection('users').updateOne(
+    { _id: creator._id },
+    {
+      $set: {
+        webhookSigningSecret: secret,
+        webhookSigningSecretCreatedAt: new Date(),
+        updatedAt: new Date(),
+      },
+    }
+  );
+  return secret;
+}
+
+export async function sendWebhookWithRetry(url, payload, retries = 3, { signingSecret } = {}) {
+  const body = JSON.stringify(payload);
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const signature = createWebhookSignatureHeader(body, signingSecret);
 
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': 'EduVault-Webhook-Sender/1.0',
+          ...(signature ? { 'X-EduVault-Signature': signature } : {}),
         },
-        body: JSON.stringify(payload),
+        body,
         signal: controller.signal,
       });
 
@@ -113,6 +158,7 @@ export async function broadcastPurchaseEvent(materialId, purchaseData) {
     if (!creator || !creator.webhookUrls || !Array.isArray(creator.webhookUrls)) {
       return;
     }
+    const signingSecret = await ensureWebhookSigningSecret(db, creator);
 
     const payload = {
       event: 'purchase.completed',
@@ -135,6 +181,7 @@ export async function broadcastPurchaseEvent(materialId, purchaseData) {
         payload: {
           urls: creator.webhookUrls,
           payload,
+          signingSecret,
         },
       },
     });

@@ -4,9 +4,9 @@ import { createContext, useContext, useState, useCallback, useMemo } from 'react
 import { useToast } from '@/hooks/useToast';
 import { purchaseService } from '@/services/purchaseService';
 import { useWallet } from '@/hooks/useWallet';
-import { isMainnet } from '@/lib/config/chain';
 import { useTransactionCenter } from '@/providers/TransactionProvider';
-import { TransactionStatus } from '@/lib/transactions/transaction';
+import { useStellarTransaction } from '@/hooks/useStellarTransaction';
+import { buildPurchaseTransactionXdr } from '@/lib/stellar/purchaseXdr';
 
 export const CartContext = createContext(null);
 
@@ -15,7 +15,8 @@ export function CartProvider({ children }) {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const toast = useToast();
   const { isConnected, address } = useWallet();
-  const { beginTransaction, markStatus, confirmTransaction, failTransaction } = useTransactionCenter();
+  const { beginTransaction, failTransaction } = useTransactionCenter();
+  const { execute } = useStellarTransaction();
 
   const addToCart = useCallback((material) => {
     const materialId = material._id || material.id;
@@ -103,64 +104,52 @@ export function CartProvider({ children }) {
     }
 
     beginTransaction({
+      scope: 'cart',
       title: 'Checkout Confirmation',
-      message: 'Preparing single consolidated Stellar transaction for checkout...',
+      message: `Preparing ${cartItems.length} Stellar purchase transaction${cartItems.length === 1 ? '' : 's'} for checkout...`,
     });
 
     try {
-      // Simulate Stellar transaction signing delay
-      markStatus(TransactionStatus.Signing, {
-        title: 'Requesting Signature',
-        message: 'Awaiting signature for consolidated Stellar purchase contract in wallet...',
-      });
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const confirmedPurchases = [];
 
-      // Simulate Stellar Soroban smart contract purchase broadcasting
-      markStatus(TransactionStatus.Submitting, {
-        title: 'Broadcasting Transaction',
-        message: `Broadcasting transaction to Soroban ${isMainnet ? 'mainnet' : 'testnet'} validators...`,
-      });
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      
-      const simulatedHash = 'simulated_cart_hash_' + Math.random().toString(36).substring(7);
-
-      markStatus(TransactionStatus.PendingConfirmation, {
-        title: 'Confirming Transaction',
-        message: 'Waiting for ledger confirmation...',
-        txHash: simulatedHash,
-      });
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      // Save each purchase to the database
-      const purchasePromises = cartItems.map((item) => {
+      for (const item of cartItems) {
         const materialId = item._id || item.id;
-        return purchaseService.createPurchase({
+        const unsignedXdr = await buildPurchaseTransactionXdr({
+          buyerAddress: address,
+          item,
+          transactionReference: `cart:${materialId}:${Date.now()}`,
+        });
+        const { hash } = await execute(unsignedXdr, {
+          description: `Purchase ${item.title || materialId}`,
+        });
+
+        const purchase = await purchaseService.createPurchase({
           buyerAddress: address,
           materialId,
-          transactionHash: simulatedHash,
+          transactionHash: hash,
           email: email || undefined,
+          amount: item.price,
+          asset: item.asset || item.assetCode || undefined,
         });
-      });
-
-      await Promise.all(purchasePromises);
-
-      // Success
-      confirmTransaction({
-        title: 'Transaction Success',
-        message: `Consolidated purchase of ${cartItems.length} materials confirmed on-chain!`,
-        txHash: simulatedHash,
-      });
+        confirmedPurchases.push(purchase);
+      }
 
       setCartItems([]);
       setIsCartOpen(false);
+      toast.show({
+        title: 'Checkout Complete',
+        message: `${confirmedPurchases.length} purchase${confirmedPurchases.length === 1 ? '' : 's'} confirmed on-chain.`,
+        type: 'success',
+        duration: 4000,
+      });
     } catch (err) {
       console.error('Checkout error:', err);
       failTransaction(err, {
-        title: 'Transaction Rejected',
+        title: 'Checkout Incomplete',
         message: err?.message || 'The checkout transaction failed or was rejected.',
       });
     }
-  }, [cartItems, isConnected, address, toast, beginTransaction, markStatus, confirmTransaction, failTransaction]);
+  }, [cartItems, isConnected, address, toast, beginTransaction, execute, failTransaction]);
 
   const value = {
     cartItems,

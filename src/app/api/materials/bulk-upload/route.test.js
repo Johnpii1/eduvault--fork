@@ -1,5 +1,15 @@
 import { describe, it, expect, vi } from 'vitest'
 
+const { mockDb, mockEnqueueSideEffect } = vi.hoisted(() => ({
+  mockDb: {
+    collection: vi.fn(() => ({
+      createIndex: vi.fn(),
+      insertOne: vi.fn(),
+    })),
+  },
+  mockEnqueueSideEffect: vi.fn(),
+}))
+
 vi.mock('@/lib/pinata', () => ({
   pinata: {
     upload: {
@@ -29,7 +39,17 @@ vi.mock('@/lib/api/hardening', () => ({
   withApiHardening: vi.fn((req, options, handler) => handler()),
 }))
 
+vi.mock('@/lib/mongodb', () => ({
+  getDb: vi.fn().mockResolvedValue(mockDb),
+}))
+
+vi.mock('@/lib/backend/outbox', () => ({
+  enqueueSideEffect: mockEnqueueSideEffect,
+}))
+
 import { POST } from './route'
+import { isReadyToPublish } from '@/lib/publishing/checklist'
+import { QUARANTINE_STATES } from '@/lib/publishing/quarantine'
 
 describe('POST /api/materials/bulk-upload', () => {
   it('returns 400 when no files are provided', async () => {
@@ -87,5 +107,39 @@ describe('POST /api/materials/bulk-upload', () => {
     expect(json.files.length).toBe(2)
     expect(json.files[0].cid).toBe('QmMockCid_test1.pdf')
     expect(json.files[1].cid).toBe('QmMockCid_test2.txt')
+    expect(json.files[0].contentHash).toBe('QmMockCid_test1.pdf')
+    expect(json.files[0].quarantineState).toBe(QUARANTINE_STATES.PENDING)
+    expect(mockEnqueueSideEffect).toHaveBeenCalledWith(expect.objectContaining({
+      sourceAggregate: 'quarantine',
+      sourceId: 'QmMockCid_test1.pdf',
+    }))
+  })
+
+  it('keeps a bulk-uploaded file off the publish-ready path until quarantine is clean', async () => {
+    const formData = new FormData()
+    formData.append('files', new File(['content'], 'publishable.pdf', { type: 'application/pdf' }))
+
+    const req = {
+      formData: async () => formData,
+      headers: new Headers(),
+    }
+
+    const res = await POST(req)
+    const json = await res.json()
+    const uploaded = json.files[0]
+    const material = {
+      title: 'Publishable',
+      storageKey: uploaded.cid,
+      contentHash: uploaded.contentHash,
+      quarantineState: uploaded.quarantineState,
+    }
+
+    expect(isReadyToPublish(material).ready).toBe(false)
+    expect(isReadyToPublish(material).missingRequired).toContain('quarantine')
+
+    expect(isReadyToPublish({
+      ...material,
+      quarantineState: QUARANTINE_STATES.CLEAN,
+    }).ready).toBe(true)
   })
 })
