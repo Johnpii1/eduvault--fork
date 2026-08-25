@@ -43,7 +43,10 @@ fn material_status_round_trips_and_keeps_discriminants() {
     assert_eq!(MaterialStatus::Active as u32, 0);
     assert_eq!(MaterialStatus::Paused as u32, 1);
     assert_eq!(MaterialStatus::Archived as u32, 2);
-    assert_eq!(roundtrip(&env, &MaterialStatus::Paused), MaterialStatus::Paused);
+    assert_eq!(
+        roundtrip(&env, &MaterialStatus::Paused),
+        MaterialStatus::Paused
+    );
 }
 
 #[test]
@@ -53,7 +56,10 @@ fn asset_kind_round_trips_and_keeps_discriminants() {
     assert_eq!(AssetKind::Token as u32, 1);
     assert_eq!(AssetKind::CreatorToken as u32, 2);
     assert_eq!(AssetKind::InstitutionAsset as u32, 3);
-    assert_eq!(roundtrip(&env, &AssetKind::InstitutionAsset), AssetKind::InstitutionAsset);
+    assert_eq!(
+        roundtrip(&env, &AssetKind::InstitutionAsset),
+        AssetKind::InstitutionAsset
+    );
 }
 
 #[test]

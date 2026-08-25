@@ -1982,7 +1982,9 @@ impl PurchaseManager {
             initiated_at: now,
             accept_after: now + delay_secs,
         };
-        env.storage().instance().set(&DataKey::PendingAdmin, &pending);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &pending);
         env.storage()
             .instance()
             .set(&DataKey::PendingAdminFrom, &admin);
