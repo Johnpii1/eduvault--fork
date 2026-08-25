@@ -26,13 +26,13 @@ async function processEmailIntent(intent) {
 }
 
 async function processWebhookIntent(intent) {
-  const { urls, payload } = intent.intent.payload;
+  const { urls, payload, signingSecret } = intent.intent.payload;
   if (!Array.isArray(urls)) {
     throw new Error('Webhook intent missing urls array');
   }
 
   const results = await Promise.allSettled(
-    urls.map(url => sendWebhookWithRetry(url, payload, 3))
+    urls.map(url => sendWebhookWithRetry(url, payload, 3, { signingSecret }))
   );
 
   const failures = results

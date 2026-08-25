@@ -255,6 +255,11 @@ Events are normalized by the indexer into stable shapes and logged idempotently 
 - Never store private keys in the web application.
 - v1 does not support refunds or entitlement revocation.
 
+### Admin Authorization Policy
+- Admin routes must always verify JWT session tokens server-side using `requireAdmin(request)` from `src/lib/api/auth.js` and verify `user.role === 'admin'`.
+- Client-side admin views must fail closed using `withAdminGuard` from `src/lib/auth/adminAuth.js` and never default-grant admin privileges when user state is missing or unverified.
+- Any action modifying disputes, moderation cases, user bans, or refunds must enforce server-side `requireAdmin`.
+
 ## 8. Deployment Direction
 
 ### Current
@@ -285,3 +290,4 @@ The chain should secure settlement and rights. The web application should optimi
 | [`creator-publishing-guide.md`](creator-publishing-guide.md) | Step-by-step tutorial for uploading and listing materials |
 | [`soroban-upgrade-pattern.md`](soroban-upgrade-pattern.md) | Contract upgrade strategy and migration rules |
 | [`purchase-flow-architecture.md`](purchase-flow-architecture.md) | Hybrid on-chain/off-chain purchase boundaries |
+| [`entitlement-authorization.md`](entitlement-authorization.md) | Entitlement authorization decision flow, states, cache guarantees, and support playbook |

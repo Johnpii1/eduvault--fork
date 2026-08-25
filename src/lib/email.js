@@ -1,7 +1,6 @@
 import nodemailer from "nodemailer";
 import { ObjectId } from "mongodb";
 
-
 function createTransporter() {
   // Prefer explicit SMTP settings; fallback to Gmail using EMAIL_USER/PASS
   const smtpHost = process.env.SMTP_HOST;
@@ -20,7 +19,9 @@ function createTransporter() {
   }
 
   if (!smtpUser || !smtpPass) {
-    throw new Error("Email credentials missing (EMAIL_USER/EMAIL_PASS or SMTP_*)");
+    throw new Error(
+      "Email credentials missing (EMAIL_USER/EMAIL_PASS or SMTP_*)",
+    );
   }
 
   // Gmail default
@@ -131,7 +132,9 @@ export async function sendPurchaseReceiptEmail(to, purchase, material) {
   const amount = purchase.amount || "0";
   const asset = purchase.asset || "XLM";
   const purchaseId = String(purchase._id || purchase.purchaseId || "N/A");
-  const dateStr = new Date(purchase.purchasedAt || purchase.confirmedAt || new Date()).toLocaleString();
+  const dateStr = new Date(
+    purchase.purchasedAt || purchase.confirmedAt || new Date(),
+  ).toLocaleString();
 
   const subject = `Receipt for your purchase: ${title}`;
 
@@ -180,52 +183,71 @@ export async function sendPurchaseReceiptEmail(to, purchase, material) {
   await transporter.sendMail({ from, to, subject, text, html });
 }
 
-import { enqueueSideEffect } from '@/lib/backend/outbox';
+import { enqueueSideEffect } from "@/lib/backend/outbox";
 
+/**
+ * Send a purchase receipt if:
+ * 1. The purchase exists and is in a confirmed/settled/completed state
+ * 2. Receipt has not already been sent
+ * 3. The receipt email is NEVER blocked by subscription preferences (transactional)
+ *
+ * Purchase receipts are transactional emails required for order confirmation
+ * and proof of purchase — they must be sent regardless of marketing opt-out status.
+ * Only marketing emails (productUpdates, etc.) respect subscription preferences.
+ */
 export async function sendReceiptIfEligible(db, purchaseId) {
   try {
-    const purchase = await db.collection('purchases').findOne({ _id: new ObjectId(String(purchaseId)) });
+    const purchase = await db
+      .collection("purchases")
+      .findOne({ _id: new ObjectId(String(purchaseId)) });
     if (!purchase) return;
     if (purchase.receiptSent) return;
-    if (!['confirmed', 'settled', 'completed'].includes(purchase.status)) return;
+    if (!["confirmed", "settled", "completed"].includes(purchase.status))
+      return;
 
     let email = purchase.userEmail;
     if (!email && purchase.buyerAddress) {
-      const user = await db.collection('users').findOne({
+      const user = await db.collection("users").findOne({
         $or: [
           { walletAddress: purchase.buyerAddress },
-          { walletAddressLower: purchase.buyerAddress.toLowerCase() }
-        ]
+          { walletAddressLower: purchase.buyerAddress.toLowerCase() },
+        ],
       });
       email = user?.email;
     }
 
     if (!email) return;
 
-    const material = await db.collection('materials').findOne({
+    const material = await db.collection("materials").findOne({
       $or: [
         { materialId: purchase.materialId },
-        { _id: ObjectId.isValid(purchase.materialId) ? new ObjectId(String(purchase.materialId)) : null }
-      ].filter(Boolean)
+        {
+          _id: ObjectId.isValid(purchase.materialId)
+            ? new ObjectId(String(purchase.materialId))
+            : null,
+        },
+      ].filter(Boolean),
     });
     if (!material) return;
 
+    // Purchase receipts are TRANSACTIONAL and are NEVER blocked by marketing preferences.
+    // They are enqueued regardless of subscription state.
     await enqueueSideEffect({
-      sourceAggregate: 'purchase',
+      sourceAggregate: "purchase",
       sourceId: String(purchase._id),
       intent: {
-        type: 'email',
-        channel: 'purchase_receipt',
+        type: "email",
+        channel: "purchase_receipt",
+        isTransactional: true, // Mark as transactional for email send logic
         payload: { email, purchase, material },
       },
     });
 
-    await db.collection('purchases').updateOne(
-      { _id: purchase._id },
-      { $set: { receiptSent: true } }
-    );
+    await db
+      .collection("purchases")
+      .updateOne({ _id: purchase._id }, { $set: { receiptSent: true } });
   } catch (err) {
-    console.error('Failed to enqueue receipt email:', err);
+    console.error("Failed to enqueue receipt email:", err);
   }
 }
 
