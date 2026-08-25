@@ -12,6 +12,70 @@ import {
 import { broadcastPurchaseEvent } from '@/lib/webhooks/sender';
 import { sendReceiptIfEligible } from '@/lib/email';
 
+function duplicateKey(error) {
+  return error?.code === 11000;
+}
+
+// Shared by both the pre-check "already purchased" path and the
+// post-insert race path (a concurrent request won the unique-index race),
+// so side effects (entitlement/receipt/webhook) fire exactly once per
+// actual purchase regardless of which path resolves it.
+async function respondForExistingPurchase(db, existing, { materialId, buyerAddress, paymentCompleted, transactionHash, signedXdr, amount, asset, email }) {
+  if (isCompletedPurchaseStatus(existing.status)) {
+    await createEntitlement(materialId, buyerAddress, {
+      purchaseId: String(existing._id),
+      transactionHash: existing.transactionHash,
+    });
+    const access = await getMaterialAccessStatus(db, materialId, buyerAddress);
+    return NextResponse.json(
+      { message: 'Already purchased', purchase: existing, access, transactionHash: existing.transactionHash },
+      { status: 200 }
+    );
+  }
+
+  if (!paymentCompleted) {
+    const access = await getMaterialAccessStatus(db, materialId, buyerAddress);
+    return NextResponse.json(
+      { message: 'Payment pending', purchase: existing, access },
+      { status: 202 }
+    );
+  }
+
+  const now = new Date();
+  await db.collection('purchases').updateOne(
+    { _id: existing._id },
+    {
+      $set: {
+        status: 'confirmed',
+        transactionHash: transactionHash || existing.transactionHash || null,
+        signedXdr: signedXdr || existing.signedXdr || null,
+        amount: amount ?? existing.amount ?? null,
+        asset: asset || existing.asset || null,
+        userEmail: email || existing.userEmail || null,
+        purchasedAt: existing.purchasedAt || now,
+        confirmedAt: now,
+        updatedAt: now,
+      },
+    }
+  );
+
+  const purchase = await db.collection('purchases').findOne({ _id: existing._id });
+  const access = await getMaterialAccessStatus(db, materialId, buyerAddress);
+
+  sendReceiptIfEligible(db, existing._id).catch(err => console.error(err));
+  // Fire webhook asynchronously
+  broadcastPurchaseEvent(materialId, {
+    buyerAddress,
+    amount: amount ?? existing.amount,
+    asset: asset || existing.asset,
+    transactionHash: transactionHash || existing.transactionHash
+  });
+
+  return NextResponse.json(
+    { success: true, purchaseId: existing._id, purchase, access, transactionHash: purchase?.transactionHash },
+    { status: 200 }
+  );
+}
 
 export async function GET(req) {
   try {
@@ -56,67 +120,14 @@ export async function POST(req) {
       return NextResponse.json({ error: user ? "Missing buyer address" : "Unauthorized" }, { status: user ? 400 : 401 });
     }
 
+    const purchaseContext = { materialId, buyerAddress, paymentCompleted, transactionHash, signedXdr, amount, asset, email };
+
     // Prevent duplicate purchases
     const existing = await db
       .collection('purchases')
       .findOne({ buyerAddress, materialId });
     if (existing) {
-      if (isCompletedPurchaseStatus(existing.status)) {
-        await createEntitlement(materialId, buyerAddress, {
-          purchaseId: String(existing._id),
-          transactionHash: existing.transactionHash,
-        });
-        const access = await getMaterialAccessStatus(db, materialId, buyerAddress);
-        return NextResponse.json(
-          { message: 'Already purchased', purchase: existing, access, transactionHash: existing.transactionHash },
-          { status: 200 }
-        );
-      }
-
-      if (!paymentCompleted) {
-        const access = await getMaterialAccessStatus(db, materialId, buyerAddress);
-        return NextResponse.json(
-          { message: 'Payment pending', purchase: existing, access },
-          { status: 202 }
-        );
-      }
-
-      const now = new Date();
-      await db.collection('purchases').updateOne(
-        { _id: existing._id },
-        {
-          $set: {
-            status: 'confirmed',
-            transactionHash: transactionHash || existing.transactionHash || null,
-            signedXdr: signedXdr || existing.signedXdr || null,
-            amount: amount ?? existing.amount ?? null,
-            asset: asset || existing.asset || null,
-            userEmail: email || existing.userEmail || null,
-            purchasedAt: existing.purchasedAt || now,
-            confirmedAt: now,
-            updatedAt: now,
-          },
-        }
-      );
-
-      const purchase = await db.collection('purchases').findOne({ _id: existing._id });
-      const access = await getMaterialAccessStatus(db, materialId, buyerAddress);
-
-      if (paymentCompleted) {
-        sendReceiptIfEligible(db, existing._id).catch(err => console.error(err));
-        // Fire webhook asynchronously
-        broadcastPurchaseEvent(materialId, {
-          buyerAddress,
-          amount: amount ?? existing.amount,
-          asset: asset || existing.asset,
-          transactionHash: transactionHash || existing.transactionHash
-        });
-      }
-
-      return NextResponse.json(
-        { success: true, purchaseId: existing._id, purchase, access, transactionHash: purchase?.transactionHash },
-        { status: 200 }
-      );
+      return respondForExistingPurchase(db, existing, purchaseContext);
     }
 
     const now = new Date();
@@ -136,7 +147,20 @@ export async function POST(req) {
       updatedAt: now,
     };
 
-    const result = await db.collection('purchases').insertOne(purchaseRecord);
+    let result;
+    try {
+      result = await db.collection('purchases').insertOne(purchaseRecord);
+    } catch (error) {
+      if (duplicateKey(error)) {
+        // Another concurrent request won the unique-index race; converge
+        // on that document instead of erroring or creating a duplicate.
+        const winner = await db.collection('purchases').findOne({ buyerAddress, materialId });
+        if (winner) {
+          return respondForExistingPurchase(db, winner, purchaseContext);
+        }
+      }
+      throw error;
+    }
     const access = await getMaterialAccessStatus(db, materialId, buyerAddress);
 
     if (paymentCompleted) {

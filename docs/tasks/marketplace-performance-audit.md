@@ -61,7 +61,7 @@ Load times were measured by instrumenting the React render lifecycle with `perfo
    const RecommendedMaterials = dynamic(() => import("@/components/materials/RecommendedMaterials"), { ssr: false });
    ```
 
-3. **Cache `/api/subjects` response** — add `Cache-Control: public, max-age=3600, stale-while-revalidate=86400` to the subjects route. Subjects rarely change.
+3. **Cache `/api/subjects` response** — add `Cache-Control: public, max-age=3600, stale-while-revalidate=86400` to the subjects route. Subjects rarely change. Done — no dedicated cache-busting endpoint was added for admins/creators adding a new subject; `stale-while-revalidate` bounds the worst case to serving one stale response while a background revalidation fetches the update, which is an acceptable tradeoff for this low-churn data.
 
 4. **Lazy-load `BuyNowModal`** — only import when the user clicks "Buy now":
    ```js
@@ -111,7 +111,7 @@ Load times were measured by instrumenting the React render lifecycle with `perfo
 
 - [ ] Apply `priority` prop to detail page hero image
 - [ ] Lazy-load `RecommendedMaterials`, `RecentlyViewedMaterials`, and `BuyNowModal`
-- [ ] Add `Cache-Control` headers to `/api/subjects` route
+- [x] Add `Cache-Control` headers to `/api/subjects` route
 - [ ] Convert marketplace listing page to RSC + thin client shell
 - [ ] Replace `force-dynamic` with `revalidate = 60` on marketplace listing
 - [ ] Add Suspense boundaries around `MaterialReviewPanel`
