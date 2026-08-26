@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { ObjectId } from "mongodb";
+import logger from "./logger.js";
 
 function createTransporter() {
   // Prefer explicit SMTP settings; fallback to Gmail using EMAIL_USER/PASS
@@ -247,8 +248,6 @@ export async function sendReceiptIfEligible(db, purchaseId) {
       .collection("purchases")
       .updateOne({ _id: purchase._id }, { $set: { receiptSent: true } });
   } catch (err) {
-    console.error("Failed to enqueue receipt email:", err);
+    logger.error({ err, purchaseId: String(purchaseId) }, "Failed to enqueue receipt email");
   }
 }
-
-// Issue 426: Email notifications implemented
